@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 venv/
 env/
 
@@ -11,6 +16,15 @@ build/
 install/
 log/
 .colcon_install_layout
+
+# CMake / C++ (paquetes ament_cmake)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.so
+*.a
 
 # Local secrets and machine-specific configuration
 .env

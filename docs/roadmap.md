@@ -31,7 +31,7 @@ Roadmap del equipo para el reto **Autonomous Navigation** de la Mobile Robotics 
 | G — Safety, robustness and fault injection | 82–94% | Ningún fallo simple ensayado hace que el stack siga ciegamente con comandos normales. | ⬜ |
 | H — Native Ubuntu and event-ready release | 94–100% | El repo se clona en Ubuntu nativo y lanza el stack completo con configuración de evento. | ⬜ |
 
-**Avance estimado:** ~12% (TP-02, TP-05 y TP-07 hechos; TP-01, TP-03 y TP-04 parciales).
+**Avance estimado:** ~13% (TP-01 a TP-05 y TP-07 hechos; TP-06 parcial).
 
 ## Plan priorizado 4–9 de octubre
 
@@ -126,20 +126,22 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 
 ### Bloque A — Foundation and reproducibility (0–12%)
 
-- [ ] **TP-01 — Freeze software baseline** [0–2%] · P0 · 🟡
+- [x] **TP-01 — Freeze software baseline** [0–2%] · P0 · ✅
   - Baseline Ubuntu 22.04 + ROS 2 Humble (ya en uso). Documentar las versiones de Python, GCC y CMake y la distro de ROS. `main` como rama estable.
+  - Hecho: [environment_matrix.md](environment_matrix.md) con baseline Ubuntu 22.04 + ROS 2 Humble + Python 3.10 (PR #1).
   - **DoD:** existe `docs/environment_matrix.md` y el equipo acepta una sola combinación.
 - [x] **TP-02 — WSL2 Ubuntu 22.04** [2–4%] · P0 · ✅
   - **DoD:** Ubuntu 22.04 operativo, terminal y red funcionan.
-- [ ] **TP-03 — VS Code Remote WSL** [4–5%] · P0 · 🟡
+- [x] **TP-03 — VS Code Remote WSL** [4–5%] · P0 · ✅
   - Extensiones Remote-WSL, Python, C/C++, CMake y ROS. Abrir el repo con `code .` **desde WSL**.
-  - ⚠️ Ahora el repo está en `E:\` (filesystem de Windows). Clonarlo dentro de `~/` en WSL para que build, git y Python corran en Linux con buen rendimiento.
+  - Hecho: repo clonado en `~/mobile-robotics-hackathon-crazyflie` dentro de WSL.
   - **DoD:** git, terminal, Python y build corren dentro de WSL.
-- [ ] **TP-04 — GitHub collaboration baseline** [5–7%] · P0 · 🟡
-  - Ya hay `origin` y `.gitignore`. Falta: `.gitignore` completo para ROS/Python/CMake, flujo branch → PR → review → merge, labels por módulo y prioridad, `.github/pull_request_template.md`.
-  - **DoD:** el equipo ha probado el flujo de PR.
+- [x] **TP-04 — GitHub collaboration baseline** [5–7%] · P0 · ✅
+  - Hecho: `origin`, `.gitignore` completo para ROS/Python/CMake, flujo rama → PR → merge probado (PR #1). Opcional: labels por módulo y prioridad.
+  - **DoD:** flujo de PR probado; los cambios entran a `main` por PR.
 - [x] **TP-05 — ROS 2 Humble development stack** [7–10%] · P0 · ✅
-  - **DoD:** un workspace mínimo compila y ejecuta. Falta verificar que `rosbag2` y `colcon` estén instalados.
+  - `colcon` y `rosbag2` verificados en [environment_matrix.md](environment_matrix.md).
+  - **DoD:** un workspace mínimo compila y ejecuta.
 - [ ] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · 🟡
   - Crear `ros2_ws/src` y `hackathon_interfaces`. Definir convenciones de nombres de topics, frames y parámetros. Launch de smoke test.
   - Hecho: esqueleto de los 14 paquetes, mensajes propios, [interfaces.md](interfaces.md) y `simulation.launch.py`. Falta: que los nodos de ejemplo se comuniquen de verdad.
