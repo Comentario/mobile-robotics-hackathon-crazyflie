@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ROS 2 / colcon build output
+build/
+install/
+log/
+.colcon_install_layout
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ROS recordings can become very large; keep them out of Git by default
+*.db3
+*.mcap
+rosbag2_*
+
+# Editor / operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
