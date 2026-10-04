@@ -1,0 +1,5 @@
+# Placeholder: waypoints reales del evento, a rellenar allí.
+# [x, y, z] en metros, frame map.
+frame_id: map
+waypoints:
+  - [0.5, 0.0, 0.5]

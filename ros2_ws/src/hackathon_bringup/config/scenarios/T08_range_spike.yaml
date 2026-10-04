@@ -1,0 +1,11 @@
+# Spike de 0.1 m en el sensor frontal durante 0.2 s.
+# Prioridad P0. Formato: docs/simulations.md.
+world: worlds/empty.yaml
+mission: missions/line.yaml
+start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw del dron al inicio
+timeout: 60.0     # s
+faults:
+  - {type: range_spike, sensor: front, value: 0.1, t_start: 5.0, t_end: 5.2}
+expected:
+  mission_state: COMPLETED
+  max_collisions: 0

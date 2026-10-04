@@ -1,0 +1,4 @@
+float32 duration        # s
+---
+bool success
+string message

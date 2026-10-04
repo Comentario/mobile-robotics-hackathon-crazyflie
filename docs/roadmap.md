@@ -108,23 +108,13 @@ Son independientes y no se sustituyen entre sí:
 | Salud de localización | `GOOD`, `DEGRADED`, `LOST` | Módulo 2 |
 | Seguridad | `NORMAL`, `SLOW`, `HOVER`, `LAND`, `ABORT` | Módulo 8. Tiene prioridad sobre las otras dos. |
 
-## Estructura objetivo del repositorio
+## Estructura del repositorio
 
-```text
-.
-├── README.md
-├── docs/            # roadmap.md, architecture.md, interfaces.md, sensor_model.md, frames.md,
-│                    # environment_matrix.md, crazyflie_command_interface.md, setup_wsl.md,
-│                    # setup_native_ubuntu.md, test_matrix.md, hackathon_day_runbook.md
-├── ros2_ws/src/     # hackathon_interfaces, hackathon_bringup, cf_adapter, simulation_adapter,
-│                    # state_monitor, range_processor, local_world_model, mission_manager,
-│                    # global_planner, path_processor, local_navigator, safety_supervisor,
-│                    # telemetry, hackathon_tests
-├── config/          # simulation.yaml, conservative.yaml, event.yaml, frames.yaml
-├── scripts/
-├── data/README.md
-└── tools/
-```
+El esqueleto ya está creado: los 14 paquetes compilan con `colcon build` y `simulation.launch.py` arranca todos los nodos (todavía vacíos). La estructura del repositorio y el mapa de código están en el [README](../README.md#estructura-del-repositorio). Contratos entre paquetes: [interfaces.md](interfaces.md). Plan de simulación: [simulations.md](simulations.md).
+
+**Cambio respecto al PDF:** `config/` no está en la raíz sino en `ros2_ws/src/hackathon_bringup/config/`, para que se instale con el paquete y los launch files la encuentren sin rutas absolutas.
+
+Documentos que se crean con su TP: `environment_matrix.md` (TP-01), `crazyflie_command_interface.md` (TP-08), `frames.md` (TP-13), `sensor_model.md` (TP-19), `hackathon_day_runbook.md` (TP-42).
 
 `build/`, `install/`, `log/`, los rosbags grandes y los artefactos temporales no se suben a Git.
 
@@ -150,8 +140,9 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
   - **DoD:** el equipo ha probado el flujo de PR.
 - [x] **TP-05 — ROS 2 Humble development stack** [7–10%] · P0 · ✅
   - **DoD:** un workspace mínimo compila y ejecuta. Falta verificar que `rosbag2` y `colcon` estén instalados.
-- [ ] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · ⬜
+- [ ] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · 🟡
   - Crear `ros2_ws/src` y `hackathon_interfaces`. Definir convenciones de nombres de topics, frames y parámetros. Launch de smoke test.
+  - Hecho: esqueleto de los 14 paquetes, mensajes propios, [interfaces.md](interfaces.md) y `simulation.launch.py`. Falta: que los nodos de ejemplo se comuniquen de verdad.
   - **DoD:** `colcon build --symlink-install` limpio y los nodos de ejemplo se comunican.
 
 ### Bloque B — Crazyflie stack and simulation adapter (12–25%)

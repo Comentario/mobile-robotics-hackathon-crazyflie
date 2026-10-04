@@ -1,0 +1,5 @@
+# Cruzar la sala en línea recta; se usa con obstáculos en medio.
+# [x, y, z] en metros, frame map.
+frame_id: map
+waypoints:
+  - [1.5, 0.0, 0.5]

@@ -1,0 +1,5 @@
+# Sala vacía de 4x4 m.
+# Formato: simulation_adapter/world.py
+bounds: [-2.0, -2.0, 2.0, 2.0]
+ceiling: 2.0
+obstacles: []

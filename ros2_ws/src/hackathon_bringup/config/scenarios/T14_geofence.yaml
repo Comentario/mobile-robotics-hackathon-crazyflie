@@ -1,0 +1,10 @@
+# Waypoint fuera del geofence: setpoint recortado.
+# Prioridad P0. Formato: docs/simulations.md.
+world: worlds/empty.yaml
+mission: missions/outside_geofence.yaml
+start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw del dron al inicio
+timeout: 60.0     # s
+faults: []
+expected:
+  max_abs_xy: 2.0
+  max_collisions: 0

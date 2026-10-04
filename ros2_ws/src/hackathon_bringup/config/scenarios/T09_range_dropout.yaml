@@ -1,0 +1,11 @@
+# Todos los rangos NaN durante 3 s: degrada de forma segura.
+# Prioridad P0. Formato: docs/simulations.md.
+world: worlds/wall.yaml
+mission: missions/line.yaml
+start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw del dron al inicio
+timeout: 60.0     # s
+faults:
+  - {type: range_dropout, sensor: all, t_start: 5.0, t_end: 8.0}
+expected:
+  max_collisions: 0
+  must_see_safety: [SLOW, HOVER]

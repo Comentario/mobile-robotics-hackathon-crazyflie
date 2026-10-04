@@ -1,0 +1,8 @@
+# Cuadrado de 4 waypoints (T02).
+# [x, y, z] en metros, frame map.
+frame_id: map
+waypoints:
+  - [1.0, -1.0, 0.5]
+  - [1.0, 1.0, 0.5]
+  - [-1.0, 1.0, 0.5]
+  - [-1.0, -1.0, 0.5]

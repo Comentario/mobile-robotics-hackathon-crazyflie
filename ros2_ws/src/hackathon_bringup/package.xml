@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>hackathon_bringup</name>
+  <version>0.1.0</version>
+  <description>Launch files y configuración (parámetros, frames, mundos, misiones, escenarios).</description>
+  <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
+  <license>TODO</license>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>simulation_adapter</exec_depend>
+  <exec_depend>cf_adapter</exec_depend>
+  <exec_depend>state_monitor</exec_depend>
+  <exec_depend>range_processor</exec_depend>
+  <exec_depend>local_world_model</exec_depend>
+  <exec_depend>mission_manager</exec_depend>
+  <exec_depend>global_planner</exec_depend>
+  <exec_depend>path_processor</exec_depend>
+  <exec_depend>local_navigator</exec_depend>
+  <exec_depend>safety_supervisor</exec_depend>
+  <exec_depend>telemetry</exec_depend>
+  <exec_depend>hackathon_tests</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

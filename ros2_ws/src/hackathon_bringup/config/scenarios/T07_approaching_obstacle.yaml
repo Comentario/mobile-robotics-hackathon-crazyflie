@@ -1,0 +1,10 @@
+# Obstáculo se acerca: el TTC provoca slow/hover.
+# Prioridad P1. Formato: docs/simulations.md.
+world: worlds/approaching.yaml
+mission: missions/line.yaml
+start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw del dron al inicio
+timeout: 60.0     # s
+faults: []
+expected:
+  max_collisions: 0
+  must_see_safety: [SLOW, HOVER]

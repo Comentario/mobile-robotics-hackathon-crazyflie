@@ -1,0 +1,5 @@
+float32 height          # m
+float32 duration        # s
+---
+bool success
+string message

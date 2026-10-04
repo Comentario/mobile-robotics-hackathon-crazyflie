@@ -174,6 +174,65 @@ El roadmap completo de 0–100% está en [docs/roadmap.md](docs/roadmap.md): arq
 
 Al terminar un TP, actualizar su casilla en `docs/roadmap.md` y, si cambia el estado de un bloque, también esta tabla.
 
+## Estructura del repositorio
+
+```text
+.
+├── README.md
+├── docs/
+│   ├── roadmap.md          # TP-01..TP-42, prioridades, test matrix, runbook
+│   ├── interfaces.md       # contrato de topics, mensajes, servicios y TF entre paquetes
+│   └── simulations.md      # niveles de simulación, escenarios y cómo evaluarlos
+├── ros2_ws/src/
+│   ├── hackathon_interfaces/   # msg/srv propios (MultiRange, Setpoint, SafetyState, ...)
+│   ├── hackathon_bringup/
+│   │   ├── launch/             # simulation.launch.py, real.launch.py
+│   │   └── config/             # simulation/event/conservative/cs2_sim.yaml, frames.yaml,
+│   │                           # worlds/, missions/, scenarios/ (T01–T16)
+│   ├── simulation_adapter/     # simulador propio: mundo, raycast, dinámica, fallos
+│   ├── cf_adapter/             # único paquete que habla con Crazyswarm2
+│   ├── state_monitor/          # estado único + salud de la localización
+│   ├── range_processor/        # validación/filtro del Multi-ranger, d_dot
+│   ├── local_world_model/      # rolling occupancy grid
+│   ├── mission_manager/        # waypoints + máquina de estados de misión
+│   ├── global_planner/         # ruta directa (P0) o A* (P1) + replan
+│   ├── path_processor/         # simplificación de ruta
+│   ├── local_navigator/        # path follower + evitación reactiva
+│   ├── safety_supervisor/      # NORMAL/SLOW/HOVER/LAND/ABORT, watchdogs, geofence
+│   ├── telemetry/              # métricas por ejecución
+│   └── hackathon_tests/        # evaluador pass/fail de escenarios
+├── scripts/                # build.sh, record_bag.sh, run_all_scenarios.sh
+└── data/                   # bags y resultados locales (fuera de Git)
+```
+
+Cada paquete Python sigue el mismo patrón: un `*_node.py` que solo hace de envoltorio ROS, y uno o más **módulos de lógica pura** (sin `rclpy`) con las funciones a implementar y tests en `test/`. Ahora mismo son esqueletos: compilan y arrancan, pero las funciones lanzan `NotImplementedError` y los tests están marcados como `skip`.
+
+### Mapa del código a escribir
+
+| Paquete | Módulos de lógica | TPs | Rol | Prioridad |
+|---|---|---|---|---|
+| `simulation_adapter` | `world.py`, `dynamics.py`, `faults.py` | TP-10, TP-41 | Integración | P0 (lo primero) |
+| `state_monitor` | `health.py` | TP-13–TP-17 | Percepción | P0 |
+| `range_processor` | `range_filter.py`, `rays.py` | TP-19–TP-21, TP-36 | Percepción | P0 |
+| `mission_manager` | `mission.py` | TP-26 | Navegación | P0 |
+| `global_planner` | `astar.py` (`direct_path` es P0), `replan.py` | TP-27–TP-29 | Navegación | P0 / P1 |
+| `local_navigator` | `follower.py`, `avoidance.py` | TP-32–TP-36 | Navegación | P0 |
+| `safety_supervisor` | `supervisor.py`, `watchdog.py`, `geofence.py` | TP-37–TP-39 | Navegación | P0 |
+| `telemetry` | `metrics.py` | TP-40 | Integración | P0 (para evaluar) |
+| `hackathon_tests` | `scenario.py` | TP-31, TP-41 | Integración | P0 |
+| `cf_adapter` | `mapping.py` | TP-08, TP-09 | Integración | P0 (tras TP-08) |
+| `local_world_model` | `grid.py` | TP-22–TP-25 | Percepción | P1 |
+| `path_processor` | `simplify.py` | TP-30 | Navegación | P1 |
+
+Para empezar a trabajar:
+
+```bash
+# En WSL, con el repo clonado dentro de ~/ (TP-03)
+bash scripts/build.sh
+source ros2_ws/install/setup.bash
+ros2 launch hackathon_bringup simulation.launch.py scenario:=T01_single_waypoint
+```
+
 ## Plan del equipo
 
 ### Antes del evento (4–9 de octubre)
@@ -245,6 +304,16 @@ ros2 node list
 ros2 topic list
 ros2 topic info /tf --verbose
 ros2 service list
+```
+
+Stack propio (más detalle en [docs/simulations.md](docs/simulations.md)):
+
+```bash
+bash scripts/build.sh && source ros2_ws/install/setup.bash
+cd ros2_ws && colcon test && colcon test-result --verbose && cd ..        # nivel 0: tests unitarios
+ros2 launch hackathon_bringup simulation.launch.py scenario:=T05_popup_obstacle rviz:=true
+ros2 launch hackathon_bringup simulation.launch.py scenario:=T09_range_dropout evaluate:=true
+bash scripts/run_all_scenarios.sh                                         # toda la matriz
 ```
 
 Antes de compartir logs, revisar que no contengan datos privados. No guardar claves SSH, tokens ni archivos `.env` en el repositorio.

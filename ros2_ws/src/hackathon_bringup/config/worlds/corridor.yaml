@@ -1,0 +1,7 @@
+# Pasillo de 0.8 m de ancho (T04).
+# Formato: simulation_adapter/world.py
+bounds: [-2.0, -2.0, 2.0, 2.0]
+ceiling: 2.0
+obstacles:
+  - {type: box, center: [0.0, 0.55], size: [2.0, 0.3]}
+  - {type: box, center: [0.0, -0.55], size: [2.0, 0.3]}

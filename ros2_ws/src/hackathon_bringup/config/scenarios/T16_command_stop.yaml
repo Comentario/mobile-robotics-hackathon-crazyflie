@@ -1,0 +1,10 @@
+# El simulador ignora comandos 3 s: watchdog / failsafe.
+# Prioridad P0. Formato: docs/simulations.md.
+world: worlds/empty.yaml
+mission: missions/line.yaml
+start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw del dron al inicio
+timeout: 60.0     # s
+faults:
+  - {type: command_pause, t_start: 5.0, t_end: 8.0}
+expected:
+  max_collisions: 0

@@ -1,0 +1,104 @@
+# Configuración del evento (TP-42 parte C). TODOS los valores son placeholders:
+# definirlos con los mentores y el espacio real el día del evento.
+# Pendiente: radio URI / robot_name, frame global, límites XYZ (geofence), altura nominal,
+# umbrales de rango, velocidades, tamaño/resolución del mapa y tolerancia de waypoint.
+
+# Sección /** = parámetros compartidos por todos los nodos (una sola fuente de verdad).
+# Cada otra sección = nombre del nodo (= nombre del paquete).
+/**:
+  ros__parameters:
+    map_frame: map
+    base_frame: base_link
+    z_min: 0.2
+    z_nominal: 0.5
+    z_max: 1.5
+    state_timeout: 0.3          # s sin pose -> LOST / HOVER
+    range_timeout: 0.3          # s sin rangos -> rangos vencidos
+    warning_distance: 0.6    # m
+    critical_distance: 0.3  # m
+    ttc_threshold: 1.5          # s
+
+simulation_adapter:
+  ros__parameters:
+    sim_rate: 100.0
+    state_rate: 50.0
+    range_rate: 20.0
+    max_speed: 1.0
+    max_accel: 2.0
+    range_noise_std: 0.01
+    pose_noise_std: 0.005
+    command_watchdog: 0.5     # s sin setpoints -> hover (imitar firmware; verificar en TP-08)
+
+cf_adapter:
+  ros__parameters:
+    robot_name: cf231
+    command_mode: position    # position | hover
+    down_tof_available: true
+
+state_monitor:
+  ros__parameters:
+    degraded_pose_age: 0.15
+    max_position_jump: 0.3
+    max_apparent_speed: 2.0
+
+range_processor:
+  ros__parameters:
+    range_min: 0.02
+    range_max: 4.0
+    filter_window: 3
+    max_valid_jump: 1.0
+
+local_world_model:
+  ros__parameters:
+    map_resolution: 0.05
+    map_width: 6.0
+    map_height: 6.0
+    obstacle_inflation_radius: 0.25
+    obstacle_decay_time: 5.0
+    map_rate: 10.0
+
+mission_manager:
+  ros__parameters:
+    waypoint_tolerance: 0.15
+    waypoint_timeout: 30.0
+    takeoff_duration: 2.0
+    land_duration: 2.0
+    autostart: false
+
+global_planner:
+  ros__parameters:
+    planner_mode: direct      # direct (P0, sin mapa) | astar (P1)
+    planner_rate: 2.0
+    replan_period: 2.0
+    connectivity: 8
+    unknown_policy: penalize  # block | penalize | free
+    unknown_cost: 5.0
+    proximity_weight: 2.0
+    planning_timeout: 0.2
+    max_path_deviation: 0.4
+
+path_processor:
+  ros__parameters:
+    max_waypoint_spacing: 0.3
+
+local_navigator:
+  ros__parameters:
+    control_rate: 20.0
+    lookahead_distance: 0.4
+    nominal_speed: 0.2
+    degraded_speed: 0.1
+    max_speed: 0.3
+    max_accel: 0.5
+    goal_slowdown_radius: 0.5
+
+safety_supervisor:
+  ros__parameters:
+    command_timeout: 0.5
+    ranges_required: true
+    geofence: [-2.0, -2.0, 0.0, 2.0, 2.0, 1.5]   # [x_min, y_min, z_min, x_max, y_max, z_max]
+    lost_policy: hover_then_land
+    hover_timeout: 3.0
+
+telemetry:
+  ros__parameters:
+    output_dir: ~/hk_runs

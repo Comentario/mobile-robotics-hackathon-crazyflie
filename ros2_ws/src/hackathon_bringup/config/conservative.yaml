@@ -1,0 +1,19 @@
+# Overlay: se aplica encima de simulation.yaml o event.yaml (argumento overlay:=conservative.yaml).
+# Primeros vuelos reales y ensayos: más lento y con más margen.
+/**:
+  ros__parameters:
+    warning_distance: 0.8
+    critical_distance: 0.45
+    ttc_threshold: 2.0
+    z_max: 1.0
+
+local_navigator:
+  ros__parameters:
+    nominal_speed: 0.15
+    degraded_speed: 0.08
+    max_speed: 0.2
+    max_accel: 0.3
+
+local_world_model:
+  ros__parameters:
+    obstacle_inflation_radius: 0.35

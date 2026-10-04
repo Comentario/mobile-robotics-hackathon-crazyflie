@@ -1,0 +1,5 @@
+# Waypoint por encima de z_max (T15).
+# [x, y, z] en metros, frame map.
+frame_id: map
+waypoints:
+  - [1.0, 0.0, 2.5]
