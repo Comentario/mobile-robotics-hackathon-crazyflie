@@ -1,31 +1,47 @@
-"""Conversiones entre mensajes de Crazyswarm2 y la API propia (TP-08, TP-09).
+"""Pure conversion helpers used by the Crazyflie adapter."""
 
-Mantener aquí todos los detalles de Crazyswarm2 (nombres, orden de rangos, unidades).
-"""
+import math
 
 
 def topic(robot_name, suffix):
-    """Nombre completo de un topic de Crazyswarm2, p. ej. topic('cf231', 'pose')."""
-    return f'/{robot_name}/{suffix}'
+    """Build a normalized Crazyswarm2 topic or service name."""
+    robot = robot_name.strip('/')
+    endpoint = suffix.strip('/')
+    return f'/{robot}/{endpoint}'
+
+
+def yaw_to_quaternion(yaw_rad):
+    """Convert a yaw angle in radians to a quaternion."""
+    half_yaw = 0.5 * yaw_rad
+    return (
+        0.0,
+        0.0,
+        math.sin(half_yaw),
+        math.cos(half_yaw),
+    )
+
+
+def seconds_to_duration_parts(duration_s):
+    """Convert floating-point seconds to ROS sec/nanosec fields."""
+    if duration_s < 0.0:
+        raise ValueError('Duration must be non-negative')
+
+    sec = int(duration_s)
+    nanosec = int(round((duration_s - sec) * 1_000_000_000))
+
+    if nanosec >= 1_000_000_000:
+        sec += 1
+        nanosec -= 1_000_000_000
+
+    return sec, nanosec
 
 
 def scan_to_ranges(scan_ranges):
-    """Convierte los rangos del LaserScan de Crazyswarm2 a dict sensor -> m.
+    """Convert Crazyswarm2 range data to the project range convention.
 
-    TODO(TP-08): confirmar el orden de los sensores (front/left/back/right) y cómo
-    representa Crazyswarm2 una lectura sin retorno; convertir a REP-117.
+    The exact Crazyflie Multi-ranger ordering is deliberately not implemented
+    until the real sensor/logging interface is confirmed.
     """
-    raise NotImplementedError
-
-
-def setpoint_to_position_cmd(setpoint):
-    """Setpoint propio (modo POSITION o HOVER) -> campos de cmd_position (x, y, z, yaw en grados?).
-
-    TODO(TP-08): confirmar unidades de yaw y frecuencia mínima de streaming.
-    """
-    raise NotImplementedError
-
-
-def setpoint_to_hover_cmd(setpoint, current_yaw):
-    """Setpoint propio (modo VELOCITY) -> cmd_hover (vx, vy en marco del cuerpo, yaw rate, z)."""
-    raise NotImplementedError
+    raise NotImplementedError(
+        'Multi-ranger mapping requires the confirmed Crazyflie sensor ordering'
+    )
