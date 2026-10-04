@@ -19,7 +19,11 @@ Parámetros:
 
 Lógica: world.py (obstáculos + raycast), dynamics.py (modelo cinemático), faults.py (inyección).
 """
+import math
+
 import rclpy
+import yaml
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
 
@@ -28,7 +32,33 @@ class SimulationAdapter(Node):
     def __init__(self):
         super().__init__('simulation_adapter')
         # TODO: declarar parámetros, publishers, subscribers y timers según el docstring.
-        self.get_logger().warn('simulation_adapter: esqueleto sin implementar')
+        # Por ahora (smoke test de TP-06) solo publica una pose fija en /hk/adapter/odom.
+        self.map_frame = self.declare_parameter('map_frame', 'map').value
+        self.base_frame = self.declare_parameter('base_frame', 'base_link').value
+        state_rate = self.declare_parameter('state_rate', 50.0).value
+        scenario_file = self.declare_parameter('scenario_file', '').value
+
+        self.start = [0.0, 0.0, 0.0, 0.0]   # x, y, z, yaw
+        if scenario_file:
+            with open(scenario_file, encoding='utf-8') as f:
+                self.start = (yaml.safe_load(f) or {}).get('start', self.start)
+
+        self.odom_pub = self.create_publisher(Odometry, '/hk/adapter/odom', 10)
+        self.create_timer(1.0 / state_rate, self._publish_odom)
+        self.get_logger().warn('simulation_adapter: solo publica una pose fija (TP-06 smoke test)')
+
+    def _publish_odom(self):
+        x, y, z, yaw = self.start
+        msg = Odometry()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.map_frame
+        msg.child_frame_id = self.base_frame
+        msg.pose.pose.position.x = float(x)
+        msg.pose.pose.position.y = float(y)
+        msg.pose.pose.position.z = float(z)
+        msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
+        msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        self.odom_pub.publish(msg)
 
 
 def main(args=None):
