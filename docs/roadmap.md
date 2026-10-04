@@ -22,7 +22,7 @@ Roadmap del equipo para el reto **Autonomous Navigation** de la Mobile Robotics 
 
 | Bloque | Rango | Gate (criterio de salida) | Estado |
 |---|---|---|---|
-| A — Foundation and reproducibility | 0–12% | Cualquier integrante clona el repo, lo abre desde WSL y compila un workspace ROS 2 limpio. | 🟡 |
+| A — Foundation and reproducibility | 0–12% | Cualquier integrante clona el repo, lo abre desde WSL y compila un workspace ROS 2 limpio. | ✅ |
 | B — Crazyflie stack and simulation adapter | 12–25% | Nuestro software recibe estado simulado y envía setpoints por una interfaz conectable después a Crazyswarm2. | 🟡 |
 | C — State, frames and localization health | 25–39% | Hay un estado único y coherente del dron, frames validados e indicador explícito de salud. | ⬜ |
 | D — Multi-ranger perception and local world model | 39–55% | Los cinco rangos producen obstáculos coherentes en un mapa local y los obstáculos viejos desaparecen. | ⬜ |
@@ -31,7 +31,7 @@ Roadmap del equipo para el reto **Autonomous Navigation** de la Mobile Robotics 
 | G — Safety, robustness and fault injection | 82–94% | Ningún fallo simple ensayado hace que el stack siga ciegamente con comandos normales. | ⬜ |
 | H — Native Ubuntu and event-ready release | 94–100% | El repo se clona en Ubuntu nativo y lanza el stack completo con configuración de evento. | ⬜ |
 
-**Avance estimado:** ~13% (TP-01 a TP-05 y TP-07 hechos; TP-06 parcial).
+**Avance estimado:** ~15% (TP-01 a TP-07 hechos; bloque A completo).
 
 ## Plan priorizado 4–9 de octubre
 
@@ -142,9 +142,9 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [x] **TP-05 — ROS 2 Humble development stack** [7–10%] · P0 · ✅
   - `colcon` y `rosbag2` verificados en [environment_matrix.md](environment_matrix.md).
   - **DoD:** un workspace mínimo compila y ejecuta.
-- [ ] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · 🟡
+- [x] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · ✅
   - Crear `ros2_ws/src` y `hackathon_interfaces`. Definir convenciones de nombres de topics, frames y parámetros. Launch de smoke test.
-  - Hecho: esqueleto de los 14 paquetes, mensajes propios, [interfaces.md](interfaces.md) y `simulation.launch.py`. Falta: que los nodos de ejemplo se comuniquen de verdad.
+  - Hecho: esqueleto de los 14 paquetes, mensajes propios, [interfaces.md](interfaces.md) (con guía del stack y convención de parámetros) y `simulation.launch.py`. Smoke test `scripts/smoke_test.sh`: `simulation_adapter` publica una pose fija en `/hk/adapter/odom` y `state_monitor` la reenvía a `/hk/state`.
   - **DoD:** `colcon build --symlink-install` limpio y los nodos de ejemplo se comunican.
 
 ### Bloque B — Crazyflie stack and simulation adapter (12–25%)

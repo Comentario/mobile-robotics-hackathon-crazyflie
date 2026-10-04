@@ -4,7 +4,7 @@ Preparación de nuestro equipo para el reto **Autonomous Navigation** de la Mobi
 
 > **Estado:** preparación inicial. Ya validamos ROS 2 Humble, Crazyswarm2 y una simulación básica `hello_world` con RViz en Ubuntu 22.04 bajo WSL 2. Todavía no está implementado el algoritmo propio de navegación autónoma ni se ha probado con el hardware real del evento.
 >
-> **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Avance estimado: ~13%.
+> **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Avance estimado: ~15%.
 
 ## Objetivo del reto
 
@@ -163,7 +163,7 @@ El roadmap completo de 0–100% está en [docs/roadmap.md](docs/roadmap.md): arq
 
 | Bloque | Rango | Contenido | Estado |
 |---|---|---|---|
-| A | 0–12% | Entorno, WSL, GitHub, ROS 2, workspace | 🟡 |
+| A | 0–12% | Entorno, WSL, GitHub, ROS 2, workspace | ✅ |
 | B | 12–25% | Crazyswarm2, interfaz de hardware, simulador propio, bringup | 🟡 |
 | C | 25–39% | Frames, estado, salud de localización, altura | ⬜ |
 | D | 39–55% | Modelo y filtrado del Multi-ranger, mapa local | ⬜ |
