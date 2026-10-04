@@ -3,6 +3,8 @@
 Preparación de nuestro equipo para el reto **Autonomous Navigation** de la Mobile Robotics Hackathon 2026, TU Dresden, 10–11 de octubre de 2026.
 
 > **Estado:** preparación inicial. Ya validamos ROS 2 Humble, Crazyswarm2 y una simulación básica `hello_world` con RViz en Ubuntu 22.04 bajo WSL 2. Todavía no está implementado el algoritmo propio de navegación autónoma ni se ha probado con el hardware real del evento.
+>
+> **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Avance estimado: ~12%.
 
 ## Objetivo del reto
 
@@ -101,17 +103,25 @@ Referencias: [Lighthouse](https://www.bitcraze.io/documentation/system/positioni
 
 ### Pendiente — prioridad alta
 
+Preguntas para mentores (no bloquean el desarrollo gracias a la capa de abstracción, TP-09/TP-10):
+
 - [ ] Preguntar qué Crazyflie/deck se asignará y qué sensores estarán realmente montados.
 - [ ] Confirmar fuente de localización (Lighthouse/Flow u otra), datos ROS disponibles, nombres/tipos de topics y tasa de actualización.
 - [ ] Confirmar si el equipo debe usar su laptop, un NUC o Jetson; backend previsto (`cflib`, `cpp` o `sim`) y acceso al radio.
-- [ ] Implementar nodo propio de misión/navegación y configuración de *waypoints*.
-- [ ] Implementar una primera política de evitación apropiada a los sensores reales y un comportamiento seguro ante datos perdidos.
-- [ ] Probar integración con un Crazyflie real bajo supervisión y espacio de vuelo autorizado.
+
+Desarrollo (el detalle está en [docs/roadmap.md](docs/roadmap.md)):
+
+- [ ] Interfaz propia de hardware + simulador con pose y rangos sintéticos (TP-09, TP-10).
+- [ ] Nodo propio de misión/navegación y configuración de *waypoints* (TP-26, TP-32).
+- [ ] Primera política de evitación apropiada a los sensores reales (TP-19, TP-20, TP-34) y comportamiento seguro ante datos perdidos (TP-15, TP-37, TP-38, TP-39).
+- [ ] Probar integración con un Crazyflie real bajo supervisión y espacio de vuelo autorizado (runbook del roadmap).
 - [ ] Medir resultados y preparar demo/presentación.
 
 ### Limitación actual de la simulación
 
 La prueba actual sirve como **smoke test** de lanzamiento, servicios de alto nivel y visualización. En la inspección que hicimos no aparecieron topics de pose/rango como `/cf231/pose` o `/scan`, y `/cf231/cmd_full_state` tenía cero publicadores al terminar `hello_world`. Por lo tanto, todavía no se ha validado percepción, localización autónoma, planificación ni evitación de obstáculos. Comprobar los endpoints durante un vuelo activo y con el backend/sensores que se vayan a usar.
+
+Para no depender de esto, el roadmap añade un `simulation_adapter` propio (TP-10) que publica pose y rangos sintéticos del Multi-ranger con la misma API que usará el adapter de hardware.
 
 ## MVP propuesto
 
@@ -143,26 +153,49 @@ stateDiagram-v2
   Aterrizar --> [*]
 ```
 
-Los umbrales de distancia, altura y velocidad deben definirse con los mentores, el espacio disponible y el deck instalado; no se fijan aquí valores arbitrarios.
+Los umbrales de distancia, altura y velocidad deben definirse con los mentores, el espacio disponible y el deck instalado; no se fijan aquí valores arbitrarios (todos van en YAML; lista en el roadmap, "Parámetros configurables").
+
+Esta máquina de estados es la capa de **misión**. El roadmap añade dos capas independientes por debajo: la **salud de la localización** (`GOOD`/`DEGRADED`/`LOST`) y el **Safety Supervisor** (`NORMAL`/`SLOW`/`HOVER`/`LAND`/`ABORT`), que puede anular la navegación normal en cualquier estado.
+
+## Roadmap
+
+El roadmap completo de 0–100% está en [docs/roadmap.md](docs/roadmap.md): arquitectura por módulos y paquetes ROS 2, los 42 TPs con su DoD, la test matrix T01–T18 y el runbook del día del evento. Como no da tiempo a hacer los 42 TPs antes del 10 de octubre, cada TP tiene una prioridad: **P0** = MVP imprescindible, **P1** = si sobra tiempo, **P2** = solo si todo está estable.
+
+| Bloque | Rango | Contenido | Estado |
+|---|---|---|---|
+| A | 0–12% | Entorno, WSL, GitHub, ROS 2, workspace | 🟡 |
+| B | 12–25% | Crazyswarm2, interfaz de hardware, simulador propio, bringup | 🟡 |
+| C | 25–39% | Frames, estado, salud de localización, altura | ⬜ |
+| D | 39–55% | Modelo y filtrado del Multi-ranger, mapa local | ⬜ |
+| E | 55–70% | Mission Manager, A*, replanning | ⬜ |
+| F | 70–82% | Path follower, evitación reactiva | ⬜ |
+| G | 82–94% | Safety Supervisor, watchdogs, geofence, rosbag, fault injection | ⬜ |
+| H | 94–100% | Ubuntu nativo, `event.yaml`, runbook | ⬜ |
+
+Al terminar un TP, actualizar su casilla en `docs/roadmap.md` y, si cambia el estado de un bloque, también esta tabla.
 
 ## Plan del equipo
 
 ### Antes del evento (4–9 de octubre)
 
-| Día | Resultado esperado |
-|---|---|
-| 4 oct | README, repositorio, checklist y registro reproducible del ejemplo que ya funciona. |
-| 5 oct | Esqueleto del nodo de misión: configuración de waypoints, estados y límites; sin acoplarlo aún a un sensor no confirmado. |
-| 6 oct | Pruebas unitarias/offline de llegada a waypoint, lecturas inválidas, obstáculo y timeout. |
-| 7 oct | Revisar topics, servicios, launch y RViz; documentar qué datos simulados faltan y cómo probar el algoritmo con datos de ejemplo. |
-| 8 oct | Congelar dependencias, README de instalación, preguntas para mentores y estructura de demo/pitch. |
-| 9 oct | Ensayo del equipo, respaldo en video de simulación, sincronización del repositorio y evitar cambios grandes de última hora. |
+Solo TPs **P0**. Cada día termina con una *vertical slice* ejecutable.
+
+| Día | TPs | Resultado esperado |
+|---|---|---|
+| 4 oct | TP-01, TP-03, TP-04 | README, roadmap, matriz de entorno, repo clonado dentro de WSL, flujo de PR probado. |
+| 5 oct | TP-06, TP-08, TP-09 | Workspace `ros2_ws`, `hackathon_interfaces`, documento de comandos Crazyflie, API propia de hardware; sin acoplarse a un sensor no confirmado. |
+| 6 oct | TP-10, TP-12, TP-13, TP-14 | Simulador propio (pose + rangos sintéticos), `simulation.launch.py`, frames, topic de estado único. **VS-1.** |
+| 7 oct | TP-15, TP-17, TP-19, TP-20, TP-26, TP-32 | Salud de localización, banda de altura, filtrado de rangos, misión por waypoints sin obstáculos. **VS-2.** |
+| 8 oct | TP-34, TP-37, TP-38, TP-39 | Evitación reactiva, Safety Supervisor, watchdogs, geofence; pruebas de llegada, lecturas inválidas, obstáculo y timeout (T01, T02, T05, T08–T16). |
+| 9 oct | TP-42 C/E | `config/event.yaml`, runbook, congelar dependencias, README de instalación, preguntas para mentores, ensayo, video de respaldo y estructura de demo/pitch. Sin cambios grandes de última hora. |
+
+El mapa de ocupación + A* (TP-22 a TP-31) es **P1**: solo si la slice P0 está estable. El MVP no lo necesita.
 
 ### Durante la hackaton (10–11 de octubre)
 
 1. **Kickoff:** confirmar criterios, pista, sensores, computador de control, radio, seguridad y API de ROS.
 2. **Baseline:** ejecutar un ejemplo proporcionado en el hardware real; no empezar volando código nuevo.
-3. **Integración incremental:** fuente de posición → lectura de obstáculos → waypoint simple → evitación → misión completa.
+3. **Integración incremental:** seguir el [runbook de 14 pasos](docs/roadmap.md#runbook-del-día-del-evento) (radio → Lighthouse → Flow → Multi-ranger → frames → hover → waypoints → obstáculos → tuning → congelar configuración). Si el stack está bien desacoplado, el cambio de simulador a hardware se limita a `cf_adapter`, configuración y tuning (VS-5).
 4. **Ensayos:** medir cada intento, registrar logs y volver a la última versión estable después de cualquier cambio riesgoso.
 5. **Presentación:** enseñar el problema, sensores, arquitectura, demo, métricas y límites conocidos.
 
@@ -170,9 +203,9 @@ El programa publicado sitúa la selección/explicación de retos el sábado por 
 
 ### Roles sugeridos para 3 personas
 
-- **Percepción/localización:** identificar sensores, validar datos y documentar frames/unidades/tasas.
-- **Navegación/control:** waypoint, máquina de estados, evitación y lógica de seguridad.
-- **Integración/demo:** ROS launch, conexión con Crazyswarm2, pruebas, métricas, README y pitch.
+- **Percepción/localización:** identificar sensores, validar datos y documentar frames/unidades/tasas. Módulos 2–4: `state_monitor`, `range_processor`, `local_world_model`.
+- **Navegación/control:** waypoint, máquina de estados, evitación y lógica de seguridad. Módulos 0 y 5–8: `mission_manager`, `global_planner`, `path_processor`, `local_navigator`, `safety_supervisor`.
+- **Integración/demo:** ROS launch, conexión con Crazyswarm2, pruebas, métricas, README y pitch. Módulos 1 y 9: `cf_adapter`, `simulation_adapter`, `hackathon_bringup`, `telemetry`, `hackathon_tests`.
 
 Todos deben poder explicar el sistema y ejecutar la demo; evitar que una sola persona conozca la integración completa.
 
@@ -184,7 +217,9 @@ Registrar como mínimo:
 - colisiones o intervenciones manuales;
 - tiempo total de misión;
 - distancia mínima observada al obstáculo, si el sensor permite medirla;
+- número de replans, eventos de estado vencido e intervenciones del Safety Supervisor;
 - número de ensayos repetidos con éxito;
+- resultado de la [test matrix T01–T18](docs/roadmap.md#test-matrix-mínima) en simulación;
 - limitaciones conocidas (oclusiones, lecturas inválidas, espacio, baja resolución del sensor).
 
 No afirmar “autónomo y robusto” solo porque el dron se movió una vez. Mostrar evidencia y explicar condiciones de prueba.
