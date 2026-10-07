@@ -16,7 +16,8 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from hackathon_bringup.stack import param_files, stack_nodes, static_sensor_tfs
+from hackathon_bringup.stack import (param_files, stack_nodes, static_sensor_tfs,
+                                    config_file, shared_frames, stop_on_exit)
 
 
 def _setup(context):
@@ -27,9 +28,9 @@ def _setup(context):
     params = param_files(config_dir, arg('params'), arg('overlay'))
     nodes = [Node(package='cf_adapter', executable='cf_adapter_node', name='cf_adapter',
                   output='screen', parameters=params)]
-    nodes += static_sensor_tfs(config_dir)
-    nodes += stack_nodes(params, os.path.join(config_dir, arg('mission')))
-    return nodes
+    nodes += static_sensor_tfs(config_dir, shared_frames(params))
+    nodes += stack_nodes(params, config_file(config_dir, arg('mission')))
+    return stop_on_exit(nodes) + nodes
 
 
 def generate_launch_description():

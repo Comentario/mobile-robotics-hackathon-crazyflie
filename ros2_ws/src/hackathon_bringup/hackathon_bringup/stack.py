@@ -22,13 +22,13 @@ STACK = [
 
 def param_files(config_dir, params, overlay):
     """Fichero base + overlay opcional (p. ej. conservative.yaml); el overlay gana."""
-    files = [os.path.join(config_dir, params)]
+    files = [config_file(config_dir, params)]
     if overlay:
-        files.append(os.path.join(config_dir, overlay))
+        files.append(config_file(config_dir, overlay))
     return files
 
 
-def static_sensor_tfs(config_dir):
+def static_sensor_tfs(config_dir, base_frame=None):
     """static_transform_publisher base_link -> frame de cada sensor (config/frames.yaml)."""
     with open(os.path.join(config_dir, 'frames.yaml'), encoding='utf-8') as f:
         frames = yaml.safe_load(f)
@@ -41,7 +41,7 @@ def static_sensor_tfs(config_dir):
             name=f'tf_{child}',
             arguments=['--x', x, '--y', y, '--z', z,
                        '--roll', roll, '--pitch', pitch, '--yaw', yaw,
-                       '--frame-id', frames['base_frame'], '--child-frame-id', child],
+                       '--frame-id', base_frame or frames['base_frame'], '--child-frame-id', child],
         ))
     return nodes
 
@@ -58,3 +58,30 @@ def stack_nodes(params, mission_file, extra=None):
         package='mission_manager', executable='mission_manager_node', name='mission_manager',
         output='screen', parameters=params + [extra, {'mission_file': mission_file}]))
     return nodes
+
+
+def config_file(config_dir, filename):
+    """Acepta una ruta absoluta o relativa a config y exige que exista."""
+    path = os.path.abspath(os.path.join(config_dir, filename))
+    if not os.path.isfile(path):
+        raise ValueError(f'No existe el archivo de configuración: {path}')
+    return path
+
+
+def shared_frames(params):
+    """Respeta overlays de map_frame/base_frame también en los TF estáticos."""
+    shared = {}
+    for path in params:
+        with open(path, encoding='utf-8') as stream:
+            data = yaml.safe_load(stream) or {}
+        shared.update(data.get('/**', {}).get('ros__parameters', {}))
+    return shared.get('base_frame')
+
+
+def stop_on_exit(nodes):
+    """Un nodo que termina cierra el bringup para no dejar un stack parcial."""
+    from launch.actions import RegisterEventHandler, Shutdown
+    from launch.event_handlers import OnProcessExit
+    return [RegisterEventHandler(OnProcessExit(
+        target_action=node, on_exit=[Shutdown(reason='Un nodo del bringup terminó')]))
+        for node in nodes]

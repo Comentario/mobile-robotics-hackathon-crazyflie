@@ -168,9 +168,10 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [ ] **TP-11 — RViz debug scene** [22–24%] · P1 · ⬜
   - Pose, TF, rayos del Multi-ranger, waypoint y path.
   - **DoD:** la configuración de RViz está guardada en el repo.
-- [ ] **TP-12 — Bringup architecture** [24–25%] · P0 · ⬜
+- [x] **TP-12 — Bringup architecture** [24–25%] · P0 · ✅
   - `simulation.launch.py`, `real.launch.py` como placeholder, parámetros separados del código.
   - **DoD:** un solo comando inicia la slice de simulación.
+  - Verificado: launch instalado con T01 y T03; 16 nodos, odometría → estado, rangos, servicios y TF, parámetros/overlays y cierre por Ctrl+C o salida de un nodo. Dos pruebas de configuración pasan. Repetir con `scripts/verify_tp12.py`; los nodos pendientes de los colegas arrancan como esqueletos, sin validar todavía la misión autónoma. `real.launch.py` conserva la arquitectura equivalente y requiere Crazyswarm2 externo; hardware sin probar.
 
 ### Bloque C — State, frames and localization health (25–39%)
 

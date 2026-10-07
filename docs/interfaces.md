@@ -291,3 +291,41 @@ TP-41. Se comprueban geometría, sensores, límites, watchdog, modos, yaw,
 servicios ROS, YAML, ruido y el ciclo despegue → navegación → rangos → aterrizaje.
 Esto valida el adapter; la misión autónoma del stack se integra en TP-12 y los
 TP de navegación/seguridad.
+
+
+## Bringup (TP-12)
+
+`simulation.launch.py` arranca con un solo comando el adapter, los nueve nodos
+comunes y seis TF estáticos de sensores. Los argumentos `scenario`, `params`
+y `overlay` eligen archivos instalados; params/overlay también aceptan rutas
+absolutas. El overlay prevalece sobre la base y su `base_frame` se aplica a los
+TF estáticos. Se comprueba que existan parámetros, escenario, mundo y misión
+antes de iniciar procesos. Si termina un nodo, se cierra el bringup completo;
+Ctrl+C cierra los procesos. `rviz:=true` añade RViz sin una escena guardada
+(TP-11 pendiente). `evaluate:=true` requiere el evaluador de escenarios, todavía
+pendiente junto con la misión autónoma y los TP de navegación/seguridad.
+
+`real.launch.py` conserva la estructura común y sustituye solo el adapter.
+Requiere un servidor de Crazyswarm2 externo; no arranca la radio ni se ha probado
+con hardware. Parámetros base `event.yaml`, misión `missions/event.yaml`.
+
+Uso desde la raíz, después de compilar el workspace:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+ros2 launch hackathon_bringup simulation.launch.py
+```
+
+Para verificar automáticamente, cerrar antes otros nodos del dominio elegido:
+
+```bash
+ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py
+ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py --scenario T03_static_wall --stop-node
+/usr/bin/python3 -m pytest ros2_ws/src/hackathon_bringup/test -q
+```
+
+Las dos verificaciones de launch pasaron, con overlays y cierre sin nodos
+residuales; las dos pruebas de configuración también. La prueba no envía órdenes
+de vuelo y comprueba arranque y conexiones disponibles. No confirma aún una
+misión autónoma completa: misión, planificación y seguridad siguen en desarrollo.

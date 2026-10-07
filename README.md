@@ -4,7 +4,7 @@ Preparación de nuestro equipo para el reto **Autonomous Navigation** de la Mobi
 
 > **Estado:** preparación inicial. Ya validamos ROS 2 Humble, Crazyswarm2 y una simulación básica `hello_world` con RViz en Ubuntu 22.04 bajo WSL 2. Todavía no está implementado el algoritmo propio de navegación autónoma ni se ha probado con el hardware real del evento.
 >
-> **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Avance estimado: ~22% (TP-01 a TP-10).
+> **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Avance estimado: ~23% (TP-01 a TP-10 y TP-12; TP-11 pendiente).
 
 ## Objetivo del reto
 
@@ -233,6 +233,11 @@ bash scripts/build.sh
 source ros2_ws/install/setup.bash
 ros2 launch hackathon_bringup simulation.launch.py scenario:=T01_single_waypoint
 ```
+
+TP-12 verificado: arranca los 16 nodos y conecta pose, estado, rangos y TF; Ctrl+C
+cierra el bringup. Para repetir: `ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py`
+(después de cargar ROS e `install/setup.bash`). Los nodos de misión, navegación
+y seguridad todavía son esqueletos; el arranque no implica una misión autónoma.
 
 ## Plan del equipo
 
