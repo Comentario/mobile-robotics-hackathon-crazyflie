@@ -1,40 +1,153 @@
-"""Inyección de fallos controlados para la campaña TP-41 y la test matrix T08–T16.
+"""Controlled fault injection used by simulation scenarios."""
 
-Formato en config/scenarios/*.yaml:
-  faults:
-    - {type: range_spike,    sensor: front, value: 0.1, t_start: 5.0, t_end: 5.2}
-    - {type: range_dropout,  sensor: all,               t_start: 5.0, t_end: 8.0}
-    - {type: pose_delay,     delay: 0.5,                t_start: 5.0, t_end: 10.0}
-    - {type: pose_freeze,                               t_start: 5.0, t_end: 10.0}
-    - {type: pose_jump,      offset: [0.5, 0.0, 0.0],   t_start: 5.0, t_end: 5.0}
-    - {type: pose_dropout,                              t_start: 5.0}   # Lighthouse perdido
-    - {type: command_pause,                             t_start: 5.0, t_end: 8.0}
-"""
+import copy
+import math
+
 
 FAULT_TYPES = (
-    'range_spike', 'range_dropout', 'pose_delay', 'pose_freeze',
-    'pose_jump', 'pose_dropout', 'command_pause',
+    'range_spike',
+    'range_dropout',
+    'pose_delay',
+    'pose_freeze',
+    'pose_jump',
+    'pose_dropout',
+    'command_pause',
 )
 
 
 class FaultInjector:
+    """Apply deterministic faults defined in scenario YAML files."""
 
     def __init__(self, faults):
-        """faults: lista de dicts como en el docstring del módulo."""
-        self.faults = faults
+        self.faults = faults or []
+
+        for fault in self.faults:
+            fault_type = fault.get('type')
+
+            if fault_type not in FAULT_TYPES:
+                raise ValueError(
+                    f'Unsupported fault type: {fault_type}'
+                )
+
+    @staticmethod
+    def _is_active(t, fault):
+        start = float(
+            fault.get('t_start', 0.0)
+        )
+
+        end = float(
+            fault.get('t_end', math.inf)
+        )
+
+        return start <= t <= end
 
     def active(self, t, fault_type):
-        """Fallos de ese tipo activos en t."""
-        raise NotImplementedError
+        """Return active faults of the requested type."""
+        return [
+            fault
+            for fault in self.faults
+            if (
+                fault.get('type') == fault_type
+                and self._is_active(t, fault)
+            )
+        ]
 
     def apply_to_ranges(self, t, ranges):
-        """Devuelve los rangos (dict sensor -> m) modificados por spikes/dropouts."""
-        raise NotImplementedError
+        """Apply range spikes and dropouts."""
+        result = dict(ranges)
+
+        for fault in self.active(t, 'range_spike'):
+            sensor = fault.get('sensor', 'all')
+            value = float(fault['value'])
+
+            if sensor == 'all':
+                for name in result:
+                    result[name] = value
+
+            elif sensor in result:
+                result[sensor] = value
+
+        for fault in self.active(t, 'range_dropout'):
+            sensor = fault.get('sensor', 'all')
+
+            if sensor == 'all':
+                for name in result:
+                    result[name] = math.nan
+
+            elif sensor in result:
+                result[sensor] = math.nan
+
+        return result
+
+    @staticmethod
+    def _history_at_or_before(pose_history, target_time):
+        candidates = [
+            (stamp, pose)
+            for stamp, pose in pose_history
+            if stamp <= target_time
+        ]
+
+        if not candidates:
+            return None
+
+        _, pose = max(
+            candidates,
+            key=lambda entry: entry[0],
+        )
+
+        return copy.deepcopy(pose)
 
     def apply_to_pose(self, t, pose, pose_history):
-        """Devuelve la pose a publicar (retrasada, congelada, con salto) o None si no se publica."""
-        raise NotImplementedError
+        """Apply delay, freeze, jump, and dropout faults."""
+        if self.active(t, 'pose_dropout'):
+            return None
+
+        result = copy.deepcopy(pose)
+
+        delays = self.active(t, 'pose_delay')
+
+        if delays:
+            delay = float(delays[0].get('delay', 0.0))
+
+            delayed = self._history_at_or_before(
+                pose_history,
+                t - delay,
+            )
+
+            if delayed is None:
+                return None
+
+            result = delayed
+
+        freezes = self.active(t, 'pose_freeze')
+
+        if freezes:
+            freeze_start = float(
+                freezes[0].get('t_start', 0.0)
+            )
+
+            frozen = self._history_at_or_before(
+                pose_history,
+                freeze_start,
+            )
+
+            if frozen is not None:
+                result = frozen
+
+        for fault in self.active(t, 'pose_jump'):
+            offset = fault.get(
+                'offset',
+                [0.0, 0.0, 0.0],
+            )
+
+            result['x'] += float(offset[0])
+            result['y'] += float(offset[1])
+            result['z'] += float(offset[2])
+
+        return result
 
     def drop_command(self, t):
-        """True si el comando recibido en t debe ignorarse (command_pause)."""
-        raise NotImplementedError
+        """Return True while command-pause injection is active."""
+        return bool(
+            self.active(t, 'command_pause')
+        )

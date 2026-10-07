@@ -18,9 +18,10 @@ Parámetros:
   range_noise_std, pose_noise_std, command_watchdog
 
 Implementado: comandos POSITION/VELOCITY/HOVER, servicios, odometría y mundo/rangos.
-Inyección avanzada de fallos reservada para TP-41.
+Inyección de fallos de escenarios integrada del aporte de main; campaña completa TP-41 pendiente.
 Lógica: world.py (obstáculos + raycast), dynamics.py (modelo cinemático), faults.py (inyección).
 """
+from collections import deque
 import math
 import random
 
@@ -34,6 +35,7 @@ from tf2_ros import TransformBroadcaster
 from visualization_msgs.msg import Marker, MarkerArray
 from .world import World
 from .sensors import sample_ranges
+from .faults import FaultInjector
 from hackathon_interfaces.srv import Takeoff, Land
 from std_srvs.srv import Trigger
 
@@ -73,9 +75,12 @@ class SimulationAdapter(Node):
             raise ValueError('pose_noise_std debe ser finito y no negativo')
         scenario_file = self.declare_parameter('scenario_file', '').value
         start = self.declare_parameter('initial_position', [0.0, 0.0, 0.0, 0.0]).value
+        self.scenario = {}
         if scenario_file:
             with open(scenario_file, encoding='utf-8') as f:
-                start = (yaml.safe_load(f) or {}).get('start', start)
+                self.scenario = yaml.safe_load(f) or {}
+                start = self.scenario.get('start', start)
+        self.fault_injector = FaultInjector(self.scenario.get('faults', []))
         parameters = (state_rate, sim_rate, self.max_speed, self.max_accel,
                       self.response_time, self.command_watchdog)
         if not all(math.isfinite(value) and value > 0 for value in parameters):
@@ -91,6 +96,7 @@ class SimulationAdapter(Node):
                                     initial, self.response_time, self.position_tolerance,
                                     self.settle_speed, self.gravity, self.max_yaw_rate)
         self.elapsed = 0.0
+        self.pose_history = deque([(0.0, self._pose_dict())])
         sample_ranges(self.world, initial, 0, self.range_min, self.range_max, self.range_noise_std, self.rng)
         self.last_command_stamp_ns = None
 
@@ -128,7 +134,12 @@ class SimulationAdapter(Node):
     def _now(self):
         return self.get_clock().now().nanoseconds / 1e9
 
+    def _pose_dict(self):
+        return {name: getattr(self.state, name) for name in ('x', 'y', 'z', 'yaw')}
+
     def _command_callback(self, msg):
+        if self.fault_injector.drop_command(self.elapsed):
+            return
         stamp_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
         stamp = stamp_ns / 1e9
         age = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
@@ -156,6 +167,9 @@ class SimulationAdapter(Node):
         previous_command = self.last_command_time
         self.drone.step(self._now(), self.dt)
         self.elapsed += self.dt
+        self.pose_history.append((self.elapsed, self._pose_dict()))
+        while len(self.pose_history) > 1 and self.elapsed-self.pose_history[0][0] > 10:
+            self.pose_history.popleft()
         if previous_command is not None and self.last_command_time is None:
             self.last_command_stamp_ns = None
             self.get_logger().warn('Timeout de comandos: capturando referencia HOVER')
@@ -208,6 +222,15 @@ class SimulationAdapter(Node):
         msg.twist.twist.linear.z = state.vz
         msg.twist.twist.angular.z = state.yaw_rate
         self.truth_pub.publish(msg)
+        measured = self.fault_injector.apply_to_pose(
+            self.elapsed, self._pose_dict(), list(self.pose_history))
+        if measured is None:
+            return  # Ground truth continúa aunque se interrumpa la estimación.
+        for axis in ('x', 'y', 'z'):
+            setattr(msg.pose.pose.position, axis, measured[axis])
+        msg.pose.pose.orientation.z = math.sin(measured['yaw']/2)
+        msg.pose.pose.orientation.w = math.cos(measured['yaw']/2)
+        # Pose delayed/frozen/jumped mantiene timestamp de publicación, como el aporte original.
         # Referencia real sin ruido arriba; estimación sintética con ruido abajo.
         for axis in ('x', 'y', 'z'):
             value = getattr(msg.pose.pose.position, axis)
@@ -229,9 +252,10 @@ class SimulationAdapter(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.base_frame
         msg.range_min, msg.range_max = float(self.range_min), float(self.range_max)
-        for name, value in sample_ranges(self.world, self.state, self.elapsed,
-                                         self.range_min, self.range_max,
-                                         self.range_noise_std, self.rng).items():
+        values = sample_ranges(self.world, self.state, self.elapsed,
+                               self.range_min, self.range_max, self.range_noise_std, self.rng)
+        values = self.fault_injector.apply_to_ranges(self.elapsed, values)
+        for name, value in values.items():
             setattr(msg, name, float(value))
         self.ranges_pub.publish(msg)
 
