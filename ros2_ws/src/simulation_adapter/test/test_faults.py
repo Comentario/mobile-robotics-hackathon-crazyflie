@@ -4,7 +4,7 @@ Ejecutar: colcon test --packages-select simulation_adapter && colcon test-result
 """
 import pytest
 
-pytestmark = pytest.mark.skip(reason='TODO: implementar junto con TP-10 / TP-41')
+pytestmark = pytest.mark.skip(reason='TP-41: inyección avanzada de fallos pendiente')
 
 def test_range_spike_only_in_window():
     pass

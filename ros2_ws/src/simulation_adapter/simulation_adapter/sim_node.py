@@ -6,7 +6,7 @@ Suscribe:
   /hk/cmd/safe              hackathon_interfaces/Setpoint   (solo lo publica safety_supervisor)
 Publica:
   /hk/adapter/odom          nav_msgs/Odometry               pose + velocidad "estimadas"
-  /hk/adapter/ranges        hackathon_interfaces/MultiRange rangos con ruido y fallos inyectados
+  /hk/adapter/ranges        hackathon_interfaces/MultiRange rangos sintéticos con ruido opcional
   /hk/sim/ground_truth      nav_msgs/Odometry               pose real, solo para métricas
   /hk/sim/obstacles         visualization_msgs/MarkerArray  obstáculos del mundo para RViz
 Servicios:
@@ -17,48 +17,256 @@ Parámetros:
   world_file, scenario_file, sim_rate, state_rate, range_rate, max_speed, max_accel,
   range_noise_std, pose_noise_std, command_watchdog
 
+Implementado: comandos POSITION/VELOCITY/HOVER, servicios, odometría y mundo/rangos.
+Inyección avanzada de fallos reservada para TP-41.
 Lógica: world.py (obstáculos + raycast), dynamics.py (modelo cinemático), faults.py (inyección).
 """
 import math
+import random
 
 import rclpy
 import yaml
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from hackathon_interfaces.msg import Setpoint, MultiRange
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
+from visualization_msgs.msg import Marker, MarkerArray
+from .world import World
+from .sensors import sample_ranges
+from hackathon_interfaces.srv import Takeoff, Land
+from std_srvs.srv import Trigger
+
+from .dynamics import DroneState, KinematicDrone, MotionCommand
 
 
 class SimulationAdapter(Node):
 
     def __init__(self):
         super().__init__('simulation_adapter')
-        # TODO: declarar parámetros, publishers, subscribers y timers según el docstring.
-        # Por ahora (smoke test de TP-06) solo publica una pose fija en /hk/adapter/odom.
         self.map_frame = self.declare_parameter('map_frame', 'map').value
         self.base_frame = self.declare_parameter('base_frame', 'base_link').value
         state_rate = self.declare_parameter('state_rate', 50.0).value
+        sim_rate = self.declare_parameter('sim_rate', 100.0).value
+        self.max_speed = self.declare_parameter('max_speed', 1.0).value
+        self.max_accel = self.declare_parameter('max_accel', 2.0).value
+        self.response_time = self.declare_parameter('response_time', 1.0).value
+        self.command_watchdog = self.declare_parameter('command_watchdog', 0.5).value
+        self.position_tolerance = self.declare_parameter('position_tolerance', 0.01).value
+        self.settle_speed = self.declare_parameter('settle_speed', 0.02).value
+        self.gravity = self.declare_parameter('gravity', 9.81).value
+        self.max_yaw_rate = self.declare_parameter('max_yaw_rate', 1.5).value
+        self.range_rate = self.declare_parameter('range_rate', 20.0).value
+        self.range_min = self.declare_parameter('range_min', 0.02).value
+        self.range_max = self.declare_parameter('range_max', 4.0).value
+        self.range_noise_std = self.declare_parameter('range_noise_std', 0.0).value
+        self.pose_noise_std = self.declare_parameter('pose_noise_std', 0.0).value
+        self.rng = random.Random(self.declare_parameter('random_seed', 0).value)
+        world_file = self.declare_parameter('world_file', '').value
+        self.world = World((-2, -2, 2, 2), 2.0)
+        if world_file:
+            with open(world_file, encoding='utf-8') as f:
+                self.world = World.from_dict(yaml.safe_load(f))
+        if not math.isfinite(self.range_rate) or self.range_rate <= 0:
+            raise ValueError('range_rate debe ser positivo y finito')
+        if not math.isfinite(self.pose_noise_std) or self.pose_noise_std < 0:
+            raise ValueError('pose_noise_std debe ser finito y no negativo')
         scenario_file = self.declare_parameter('scenario_file', '').value
-
-        self.start = [0.0, 0.0, 0.0, 0.0]   # x, y, z, yaw
+        start = self.declare_parameter('initial_position', [0.0, 0.0, 0.0, 0.0]).value
         if scenario_file:
             with open(scenario_file, encoding='utf-8') as f:
-                self.start = (yaml.safe_load(f) or {}).get('start', self.start)
+                start = (yaml.safe_load(f) or {}).get('start', start)
+        parameters = (state_rate, sim_rate, self.max_speed, self.max_accel,
+                      self.response_time, self.command_watchdog)
+        if not all(math.isfinite(value) and value > 0 for value in parameters):
+            raise ValueError('Tasas, límites y tiempos deben ser finitos y positivos')
+        if len(start) != 4 or not all(math.isfinite(value) for value in start):
+            raise ValueError('La posición inicial debe contener x, y, z, yaw finitos')
+        self.dt = 1.0 / sim_rate
+        if self.dt > self.response_time:
+            raise ValueError('El periodo de simulación debe ser menor que response_time')
+        initial = DroneState(x=float(start[0]), y=float(start[1]), z=float(start[2]),
+                             yaw=float(start[3]), flying=start[2] > 0)
+        self.drone = KinematicDrone(self.max_speed, self.max_accel, self.command_watchdog,
+                                    initial, self.response_time, self.position_tolerance,
+                                    self.settle_speed, self.gravity, self.max_yaw_rate)
+        self.elapsed = 0.0
+        sample_ranges(self.world, initial, 0, self.range_min, self.range_max, self.range_noise_std, self.rng)
+        self.last_command_stamp_ns = None
 
+        self.truth_pub = self.create_publisher(Odometry, '/hk/sim/ground_truth', 10)
+        self.ranges_pub = self.create_publisher(MultiRange, '/hk/adapter/ranges', 10)
+        self.markers_pub = self.create_publisher(MarkerArray, '/hk/sim/obstacles', 10)
+        self.tf_broadcaster = TransformBroadcaster(self)
         self.odom_pub = self.create_publisher(Odometry, '/hk/adapter/odom', 10)
-        self.create_timer(1.0 / state_rate, self._publish_odom)
-        self.get_logger().warn('simulation_adapter: solo publica una pose fija (TP-06 smoke test)')
+        self.command_sub = self.create_subscription(Setpoint, '/hk/cmd/safe', self._command_callback, 10)
+        self.takeoff_srv = self.create_service(Takeoff, '/hk/takeoff', self._takeoff_callback)
+        self.land_srv = self.create_service(Land, '/hk/land', self._land_callback)
+        self.emergency_srv = self.create_service(Trigger, '/hk/emergency', self._emergency_callback)
+        self.sim_timer = self.create_timer(self.dt, self._step)
+        self.state_timer = self.create_timer(1.0 / state_rate, self._publish_odom)
+        self.range_timer = self.create_timer(1.0 / self.range_rate, self._publish_ranges)
+        self.marker_timer = self.create_timer(0.1, self._publish_markers)
+        self.get_logger().info('Simulador TP-10 listo: comandos, servicios, odometría y seis rangos')
+
+    @property
+    def state(self):
+        return self.drone.state
+
+    @property
+    def target(self):
+        return self.drone.target
+
+    @property
+    def mode(self):
+        return self.drone.mode
+
+    @property
+    def last_command_time(self):
+        return self.drone.last_command_time
+
+    def _now(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def _command_callback(self, msg):
+        stamp_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        stamp = stamp_ns / 1e9
+        age = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
+        values = (msg.position.x, msg.position.y, msg.position.z, msg.yaw,
+                  msg.velocity.x, msg.velocity.y, msg.velocity.z)
+        if msg.header.frame_id != self.map_frame or not 0 <= age <= self.command_watchdog:
+            self.get_logger().warn('Comando rechazado: frame incorrecto o timestamp vencido/futuro')
+            return
+        if not all(math.isfinite(value) for value in values):
+            self.get_logger().warn('Comando rechazado: valores no finitos')
+            return
+        if self.last_command_stamp_ns is not None and stamp_ns < self.last_command_stamp_ns:
+            return
+        try:
+            self.drone.set_command(stamp, MotionCommand(
+                msg.mode, (msg.position.x, msg.position.y, msg.position.z), msg.yaw,
+                (msg.velocity.x, msg.velocity.y, msg.velocity.z)))
+        except ValueError as exc:
+            self.get_logger().warn(str(exc))
+            return
+        self.last_command_stamp_ns = stamp_ns
+
+    def _step(self):
+        previous_phase = self.drone.phase
+        previous_command = self.last_command_time
+        self.drone.step(self._now(), self.dt)
+        self.elapsed += self.dt
+        if previous_command is not None and self.last_command_time is None:
+            self.last_command_stamp_ns = None
+            self.get_logger().warn('Timeout de comandos: capturando referencia HOVER')
+        if previous_phase != self.drone.phase:
+            self.get_logger().info(f'Estado simulado: {previous_phase} → {self.drone.phase}')
+
+    def _takeoff_callback(self, request, response):
+        try:
+            self.drone.takeoff(request.height, request.duration)
+            self.last_command_stamp_ns = None
+            response.success = True
+            response.message = 'Despegue aceptado; comprobar altura en odometría para confirmar llegada'
+        except ValueError as exc:
+            response.success, response.message = False, str(exc)
+        return response
+
+    def _land_callback(self, request, response):
+        try:
+            self.drone.land(request.duration)
+            self.last_command_stamp_ns = None
+            response.success = True
+            response.message = 'Aterrizaje aceptado; comprobar contacto con suelo en odometría'
+        except ValueError as exc:
+            response.success, response.message = False, str(exc)
+        return response
+
+    def _emergency_callback(self, request, response):
+        del request
+        self.drone.emergency_stop()
+        self.last_command_stamp_ns = None
+        response.success = True
+        response.message = 'Corte simulado: caída con gravedad; requiere reiniciar el simulador'
+        return response
 
     def _publish_odom(self):
-        x, y, z, yaw = self.start
+        state = self.state
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.map_frame
         msg.child_frame_id = self.base_frame
-        msg.pose.pose.position.x = float(x)
-        msg.pose.pose.position.y = float(y)
-        msg.pose.pose.position.z = float(z)
-        msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
-        msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        msg.pose.pose.position.x = state.x
+        msg.pose.pose.position.y = state.y
+        msg.pose.pose.position.z = state.z
+        msg.pose.pose.orientation.z = math.sin(state.yaw / 2.0)
+        msg.pose.pose.orientation.w = math.cos(state.yaw / 2.0)
+        # Odometry expresa twist en el frame del cuerpo, no en map.
+        c, s = math.cos(state.yaw), math.sin(state.yaw)
+        msg.twist.twist.linear.x = c * state.vx + s * state.vy
+        msg.twist.twist.linear.y = -s * state.vx + c * state.vy
+        msg.twist.twist.linear.z = state.vz
+        msg.twist.twist.angular.z = state.yaw_rate
+        self.truth_pub.publish(msg)
+        # Referencia real sin ruido arriba; estimación sintética con ruido abajo.
+        for axis in ('x', 'y', 'z'):
+            value = getattr(msg.pose.pose.position, axis)
+            setattr(msg.pose.pose.position, axis, value + self.rng.gauss(0, self.pose_noise_std))
+        for index in (0, 7, 14):
+            msg.pose.covariance[index] = self.pose_noise_std**2
         self.odom_pub.publish(msg)
+        transform = TransformStamped()
+        transform.header = msg.header
+        transform.child_frame_id = self.base_frame
+        transform.transform.translation.x = msg.pose.pose.position.x
+        transform.transform.translation.y = msg.pose.pose.position.y
+        transform.transform.translation.z = msg.pose.pose.position.z
+        transform.transform.rotation = msg.pose.pose.orientation
+        self.tf_broadcaster.sendTransform(transform)
+
+    def _publish_ranges(self):
+        msg = MultiRange()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.base_frame
+        msg.range_min, msg.range_max = float(self.range_min), float(self.range_max)
+        for name, value in sample_ranges(self.world, self.state, self.elapsed,
+                                         self.range_min, self.range_max,
+                                         self.range_noise_std, self.rng).items():
+            setattr(msg, name, float(value))
+        self.ranges_pub.publish(msg)
+
+    def _publish_markers(self):
+        array = MarkerArray()
+        clear = Marker()
+        clear.action = Marker.DELETEALL
+        array.markers.append(clear)
+        # Sala y cajas en map; temporalidad/movimiento usan tiempo relativo al arranque.
+        x0, y0, x1, y1 = self.world.bounds
+        h = self.world.ceiling
+        solids = [((x0, (y0+y1)/2, h/2), (0.02, y1-y0, h)),
+                  ((x1, (y0+y1)/2, h/2), (0.02, y1-y0, h)),
+                  (((x0+x1)/2, y0, h/2), (x1-x0, 0.02, h)),
+                  (((x0+x1)/2, y1, h/2), (x1-x0, 0.02, h)),
+                  (((x0+x1)/2, (y0+y1)/2, h), (x1-x0, y1-y0, 0.02)),
+                  (((x0+x1)/2, (y0+y1)/2, 0.0), (x1-x0, y1-y0, 0.02))]
+        for box in self.world.obstacles:
+            if box.active(self.elapsed):
+                x, y = box.center_at(self.elapsed)
+                height = min(box.height, h)
+                solids.append(((x, y, height/2), (*box.size, height)))
+        for index, (position, size) in enumerate(solids):
+            marker = Marker()
+            marker.header.frame_id = self.map_frame
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns, marker.id = 'world', index
+            marker.type, marker.action = Marker.CUBE, Marker.ADD
+            marker.pose.position.x, marker.pose.position.y, marker.pose.position.z = map(float, position)
+            marker.pose.orientation.w = 1.0
+            marker.scale.x, marker.scale.y, marker.scale.z = map(float, size)
+            marker.color.r, marker.color.g, marker.color.b = 0.6, 0.4, 0.2
+            marker.color.a = 0.25 if index < 6 else 0.8
+            array.markers.append(marker)
+        self.markers_pub.publish(array)
 
 
 def main(args=None):

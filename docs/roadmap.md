@@ -160,7 +160,8 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
   - API ROS propia para `state`, `ranges`, `command`, `takeoff`, `land` y `emergency`.
   - **DoD:** ningún planner depende de nombres internos de Crazyswarm2.
   - Implementado: pose/odom/TF → API propia, scan cardinal y logging vertical opcional, POSITION/VELOCITY XY/HOVER → FullState, servicios con respuesta/timeout y bloqueo de streaming durante transiciones. 29 pruebas pasan (lógica, transporte ROS con mocks y conexión al SIL); hardware y logging real pendientes del runbook. Contrato y configuración en `docs/interfaces.md`.
-- [ ] **TP-10 — Simulation adapter** [19–22%] · P0 · ⬜
+- [x] **TP-10 — Simulation adapter** [19–22%] · P0 · ✅
+  - Implementado: POSITION/VELOCITY XY/HOVER y yaw, límites de velocidad/aceleración, servicios de vuelo, mundo YAML y seis rangos por raycast; odometría, ground truth, TF y marcadores. Verificado: 72 pruebas pasan, incluido ciclo de vuelo mediante ROS; 3 pruebas de fallos omitidas (TP-41). Repetir con `bash scripts/verify_tp10.sh`. Integración de misión/stack: TP-12; no implica validar hardware.
   - Nodo que publica pose y rangos sintéticos (raycast contra obstáculos definidos en YAML) con la misma API que el hardware, acepta setpoints e integra un movimiento simple. No hace falta Gazebo.
   - Motivo: el backend `sim` de Crazyswarm2 no publica rangos del Multi-ranger (ver "Limitación actual" en el README).
   - **DoD:** el stack corre sin dron físico.

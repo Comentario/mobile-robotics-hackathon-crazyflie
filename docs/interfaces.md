@@ -41,7 +41,7 @@ Dos ideas de diseño:
 
 | Módulo | Paquete | Qué hace | Pregunta que responde | TPs |
 |---|---|---|---|---|
-| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Puede inyectar fallos. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
+| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Inyección de fallos prevista en TP-41. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
 | 1 | `cf_adapter` | **Dron real**: traduce entre Crazyswarm2 y la API `/hk/*`. Es el único paquete que conoce Crazyswarm2. | ¿Dónde estoy y qué veo? (hardware) | TP-08, TP-09 |
 | 2 | `state_monitor` | Publica el estado único (`map → base_link`) y la salud de la localización: `GOOD` / `DEGRADED` / `LOST`. No es un EKF nuevo. | ¿Me puedo fiar de mi posición? | TP-13 a TP-17 |
 | 3 | `range_processor` | Valida y filtra los rangos (NaN, fuera de rango, picos) y los convierte en rayos con dirección. | ¿Qué obstáculos detecto ahora? | TP-19 a TP-22 |
@@ -76,7 +76,7 @@ state_monitor/
 
 La lógica se separa del nodo (regla 6) para poder probarla con `pytest` en milisegundos, sin lanzar ROS. El nodo solo conecta esa lógica con los topics.
 
-**Estado actual:** `cf_adapter` implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. Los demás paquetes siguen mayormente como esqueletos, salvo el smoke test de TP-06: `simulation_adapter` publica una pose fija y `state_monitor` la reenvía a `/hk/state`. Cada TP posterior completa su parte; la numeración de referencia está en el roadmap.
+**Estado actual:** `cf_adapter` implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. TP-10 implementa `simulation_adapter`: POSITION/VELOCITY XY/HOVER, yaw, velocidad/aceleración limitadas, servicios de vuelo y seis rangos sintéticos contra un mundo YAML. Publica odometría, ground truth, TF y obstáculos; 72 pruebas pasan. La inyección avanzada de fallos sigue pendiente en TP-41. `state_monitor` reenvía la odometría a `/hk/state`; los demás paquetes siguen mayormente como esqueletos. La numeración de referencia está en el roadmap.
 
 ## Sensores: qué llega al stack
 
@@ -93,7 +93,7 @@ Si hiciera falta el flujo óptico crudo (por ejemplo, para diagnosticar superfic
 ## Reglas
 
 1. **Solo `cf_adapter` conoce Crazyswarm2.** Ningún otro paquete usa topics o servicios `/cfXXX/...` (TP-09).
-2. **`simulation_adapter` y `cf_adapter` exponen exactamente la misma API** (`/hk/adapter/*`, `/hk/takeoff`, `/hk/land`, `/hk/emergency`). Pasar de simulación a hardware consiste en cambiar el adapter (VS-5).
+2. **`simulation_adapter` y `cf_adapter` deben exponer la misma API** (`/hk/adapter/*`, `/hk/takeoff`, `/hk/land`, `/hk/emergency`). Ambos adapters implementan esos endpoints; las limitaciones físicas y del backend se documentan abajo. Pasar de simulación a hardware consiste en cambiar el adapter (VS-5).
 3. **Solo `safety_supervisor` publica `/hk/cmd/safe`**, que es lo único que escuchan los adapters. `local_navigator` solo *propone* comandos en `/hk/cmd/nav`.
 4. Todo el stack consume **un único estado**: `/hk/state` (TP-14).
 5. Unidades SI (m, s, rad), ejes REP-103 (x adelante, y izquierda, z arriba) y rangos según REP-117 (`+inf` sin retorno, `-inf` demasiado cerca, `NaN` inválido).
@@ -167,6 +167,19 @@ flowchart LR
 | `/hk/emergency` | `std_srvs/Trigger` | adapter | safety_supervisor, operador |
 | `/hk/mission/start`, `pause`, `resume`, `abort` | `std_srvs/Trigger` | mission_manager | operador |
 
+En el simulador propio, `success=true` confirma aceptación, no llegada. El modelo
+`KinematicDrone` separa GROUND, TAKING_OFF, FLYING, LANDING y EMERGENCY. Solo FLYING
+acepta referencias de navegación; para salir de GROUND debe solicitarse takeoff.
+Despegue/aterrizaje generan una referencia vertical suave durante la duración
+solicitada y esperan posición/velocidad dentro de `position_tolerance` y
+`settle_speed`; los límites del modelo pueden prolongar la llegada. Landing tiene
+prioridad sobre navegación y puede interrumpir un despegue. Al contactar el suelo
+se fija Z=0 y velocidad cero. Emergency interrumpe cualquier maniobra y simula
+caída por `gravity`, sin control de motores ni drag, hasta contactar el suelo;
+queda enclavada hasta reiniciar el nodo. No reproduce el firmware de emergencia
+ni una dinámica 6DOF. En vuelo libre, perder comandos captura HOVER; ese watchdog
+no cancela las maniobras de servicio, que no requieren un stream de setpoints.
+
 ## Mensajes propios (`hackathon_interfaces`)
 
 | Mensaje | Contenido |
@@ -230,3 +243,51 @@ export ROS_DOMAIN_ID=89 ROS_LOCALHOST_ONLY=1 ROS_LOG_DIR=/tmp/tp09-ros-logs
 ```
 
 Usar un dominio ROS de pruebas sin otros nodos y adaptar la ruta de bindings a cada equipo. Las pruebas ROS usan telemetría y servicios sintéticos; la prueba SIL usa callbacks del servidor **a través del transporte ROS y del adapter**, con física `np`. Sin bindings instalados, la prueba SIL se omite explícitamente. Ninguna prueba conecta Crazyradio ni valida vuelo real.
+
+
+## Simulador propio (TP-10)
+
+`simulation_adapter` sustituye a `cf_adapter`; arrancar solo uno por dominio ROS.
+POSITION sigue XYZ y yaw; VELOCITY sigue velocidad XY en `map`, mantiene
+`position.z` y rechaza `velocity.z != 0`; HOVER captura posición y yaw al entrar.
+La velocidad vectorial y su cambio están limitados por `max_speed` y `max_accel`;
+el yaw recorre el camino angular más corto con límite `max_yaw_rate`. Puede haber
+sobrepaso por inercia. Se rechazan comandos de otro frame, vencidos, futuros,
+fuera de orden, no finitos o de un modo desconocido.
+
+`world_file` carga bounds, ceiling y cajas desde YAML; sin archivo usa una sala
+vacía de 4×4×2 m. `scenario_file` aporta start=[x,y,z,yaw]. Cajas con altura,
+velocidad y ventana [t_start,t_end) usan segundos relativos al arranque. El
+modelo avanza 1/sim_rate por tick; bajo carga puede avanzar más lento que el
+reloj ROS, usado para timestamps y watchdog. No publica `/clock`.
+
+Los seis rayos consideran paredes, cajas, techo y suelo. Los offsets nominales
+son los de `config/frames.yaml`, todavía sujetos a medición en TP-13; se rotan
+con yaw. Rangos en metros, frame `base_link`, a `range_rate`: +inf fuera de
+`range_max`, -inf por debajo de `range_min`. Un sensor fuera de la sala devuelve
+-inf. Los obstáculos son geometría de percepción; no bloquean físicamente el
+movimiento ni sustituyen la seguridad del supervisor. `World.collides` permite
+consultar contacto geométrico; no se implementa dinámica de impactos.
+
+`/hk/sim/ground_truth` publica el estado sin ruido; `/hk/adapter/odom` y su TF
+`map → base_link` incluyen ruido XYZ opcional y covarianza correspondiente.
+Twist se expresa en `base_link`, con velocidad angular Z en rad/s.
+`range_noise_std` y `pose_noise_std` son desviaciones estándar; `random_seed`
+permite reproducir las muestras. Por defecto el nodo usa ruido cero;
+`simulation.yaml` configura ruido de rangos 0.01 m y pose 0.005 m.
+`/hk/sim/obstacles` publica la sala y las cajas activas como MarkerArray.
+Los eventos `faults` de los escenarios se implementarán en TP-41 y todavía
+no se aplican; esto impide dar por validados los escenarios con fallos.
+
+Verificación desde la raíz, con un dominio sin otros nodos:
+
+```bash
+bash scripts/build.sh --packages-select simulation_adapter hackathon_bringup
+bash scripts/verify_tp10.sh
+```
+
+Resultado de revisión: 72 pruebas correctas y 3 omitidas explícitamente de
+TP-41. Se comprueban geometría, sensores, límites, watchdog, modos, yaw,
+servicios ROS, YAML, ruido y el ciclo despegue → navegación → rangos → aterrizaje.
+Esto valida el adapter; la misión autónoma del stack se integra en TP-12 y los
+TP de navegación/seguridad.

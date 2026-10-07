@@ -23,11 +23,19 @@ simulation_adapter:
     sim_rate: 100.0
     state_rate: 50.0
     range_rate: 20.0
+    range_min: 0.02          # m, límites de los sensores sintéticos
+    range_max: 4.0
+    max_yaw_rate: 1.5        # rad/s, modelo cinemático
+    random_seed: 0          # ruido reproducible
     max_speed: 1.0
     max_accel: 2.0
+    response_time: 1.0       # simulador; no modifica el controlador del dron real
+    position_tolerance: 0.01 # simulador: m
+    settle_speed: 0.02       # simulador: m/s
+    gravity: 9.81            # simulador: m/s²
     range_noise_std: 0.01
     pose_noise_std: 0.005
-    command_watchdog: 0.5     # s sin setpoints -> hover (imitar firmware; verificar en TP-08)
+    command_watchdog: 0.5     # s sin setpoints -> hover; política del simulador propio
 
 cf_adapter:
   ros__parameters:
