@@ -36,6 +36,11 @@ GOOD, DEGRADED, LOST = 0, 1, 2   # igual que hackathon_interfaces/LocalizationHe
 # para que el resto del stack llegue a verlo y no sea un aviso de una sola muestra.
 JUMP_HOLD = 1.0
 
+# Ventana (s) para medir la velocidad aparente. Entre dos muestras seguidas (0,02 s)
+# el ruido de la pose y los retrasos del PC o de la radio dan velocidades falsas
+# (1 cm de ruido / 0,005 s = 2 m/s). Sobre 0,1 s el ruido apenas influye.
+SPEED_WINDOW = 0.1
+
 
 @dataclass
 class HealthConfig:
@@ -55,6 +60,7 @@ class LocalizationHealthMonitor:
         self._nan = False              # la última pose era inválida
         self._jump_time = None         # hora del último salto detectado
         self._overspeed_time = None    # hora de la última velocidad imposible
+        self._speed_ref = None         # (t, posición) de referencia para la velocidad
 
     def update(self, t, position):
         """Registra una pose nueva (t en s, position = (x, y, z)). Detecta NaN/inf y saltos.
@@ -69,18 +75,28 @@ class LocalizationHealthMonitor:
 
         if self._last_position is not None:
             distance = math.dist(position, self._last_position)
-            dt = t - self._last_stamp
 
+            # Salto: entre dos muestras seguidas (un salto real es instantáneo).
             if distance > self.config.max_position_jump:
                 self._jump_time = t
-            elif dt > 0.0 and distance / dt > self.config.max_apparent_speed:
-                self._overspeed_time = t
+                self._speed_ref = (t, tuple(position))   # el salto no cuenta como velocidad
+
+            # Velocidad aparente: sobre una ventana de SPEED_WINDOW s.
+            ref_t, ref_pos = self._speed_ref
+            dt = t - ref_t
+            if dt >= SPEED_WINDOW:
+                if math.dist(position, ref_pos) / dt > self.config.max_apparent_speed:
+                    self._overspeed_time = t
+                self._speed_ref = (t, tuple(position))
+            elif dt < 0.0:
+                self._speed_ref = (t, tuple(position))   # pose más vieja: reiniciar
 
             # Pose nueva = posición distinta a la anterior (ver "freeze").
             if distance > 0.0:
                 self._last_fresh_stamp = t
         else:
             self._last_fresh_stamp = t
+            self._speed_ref = (t, tuple(position))
 
         self._last_position = tuple(position)
         self._last_stamp = t

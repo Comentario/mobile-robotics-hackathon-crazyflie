@@ -1,0 +1,8 @@
+# Overlay temporal para el MVP (TP-37): permite volar sin rangos del Multi-ranger.
+# Motivo: range_processor y los rangos del simulador (TP-10 incremento 4) aún no
+# existen; con ranges_required: true el supervisor se quedaría siempre en HOVER.
+# Uso: ros2 launch hackathon_bringup simulation.launch.py overlay:=mvp_no_ranges.yaml
+# Borrar cuando /hk/ranges esté disponible.
+safety_supervisor:
+  ros__parameters:
+    ranges_required: false
