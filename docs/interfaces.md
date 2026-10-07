@@ -2,6 +2,94 @@
 
 Contrato entre paquetes. Si cambian un topic, un mensaje o un servicio, actualicen este documento **en el mismo PR**.
 
+Las secciones [Conceptos de ROS 2](#conceptos-de-ros-2) a [Sensores: qué llega al stack](#sensores-qué-llega-al-stack) son una guía para entender cómo está organizado el stack. A partir de [Reglas](#reglas) empieza el contrato en sí.
+
+## Conceptos de ROS 2
+
+| Concepto | Qué es | Analogía |
+|---|---|---|
+| **Paquete** | Carpeta dentro de `ros2_ws/src/` con su código, `package.xml` y `setup.py`. Es la unidad que compila `colcon`. | Un módulo o librería |
+| **Nodo** | Programa que se ejecuta. Cada paquete de este stack tiene uno (`*_node.py`). | Un proceso o microservicio |
+| **Topic** | Canal con nombre (`/hk/state`) en el que un nodo **publica** datos de forma continua y otros se **suscriben**. | Una emisora de radio |
+| **Mensaje** | Formato de los datos de un topic: estándar de ROS (`nav_msgs/Odometry`) o propio (`hackathon_interfaces/MultiRange`). | El esquema de un JSON |
+| **Servicio** | Petición puntual con respuesta, por ejemplo "despega a 0.5 m" → "ok". | Una llamada a una API |
+| **Frame (TF)** | Sistema de coordenadas con nombre (`map`, `base_link`…). ROS convierte posiciones de uno a otro. | "Delante del dron" frente a "norte del mapa" |
+| **Launch file** | Script que arranca varios nodos a la vez con su configuración. | Un `docker-compose` |
+| **Workspace** | `ros2_ws/`: agrupa todos los paquetes; `colcon build` los compila juntos. | Un monorepo |
+
+## Recorrido de los datos
+
+Un ciclo completo va del dron (o del simulador) al comando que vuelve al dron:
+
+1. **Sensar:** el adapter publica la pose estimada (`/hk/adapter/odom`) y los rangos (`/hk/adapter/ranges`).
+2. **Normalizar:** `state_monitor` publica el estado único (`/hk/state`) y la salud de la localización. `range_processor` publica los rangos filtrados (`/hk/ranges`).
+3. **Modelar el entorno:** `local_world_model` convierte los rangos en un mapa local (`/hk/map`).
+4. **Decidir el objetivo:** `mission_manager` publica el waypoint actual (`/hk/goal`).
+5. **Planificar:** `global_planner` calcula la ruta (`/hk/path`) y `path_processor` la simplifica (`/hk/path/processed`).
+6. **Proponer un comando:** `local_navigator` sigue la ruta, esquiva lo que aparezca y propone un setpoint (`/hk/cmd/nav`).
+7. **Validar:** `safety_supervisor` acepta, reduce o anula el comando y publica el definitivo (`/hk/cmd/safe`).
+8. **Actuar:** el adapter envía el setpoint al Crazyflie (o lo integra en el simulador). El control de actitud y motores sigue siendo onboard.
+
+El diagrama completo está en [Grafo de nodos](#grafo-de-nodos).
+
+Dos ideas de diseño:
+
+- **Solo el adapter cambia entre simulación y hardware.** El resto del stack no sabe si vuela un dron real o el simulador, así que se puede desarrollar todo sin hardware.
+- **El navigator propone y el supervisor decide.** El dron solo escucha `/hk/cmd/safe`, que únicamente publica `safety_supervisor`. Un fallo en la navegación no llega al dron sin pasar por el filtro de seguridad.
+
+## Qué hace cada paquete
+
+| Módulo | Paquete | Qué hace | Pregunta que responde | TPs |
+|---|---|---|---|---|
+| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Puede inyectar fallos. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
+| 1 | `cf_adapter` | **Dron real**: traduce entre Crazyswarm2 y la API `/hk/*`. Es el único paquete que conoce Crazyswarm2. | ¿Dónde estoy y qué veo? (hardware) | TP-08, TP-09 |
+| 2 | `state_monitor` | Publica el estado único (`map → base_link`) y la salud de la localización: `GOOD` / `DEGRADED` / `LOST`. No es un EKF nuevo. | ¿Me puedo fiar de mi posición? | TP-13 a TP-17 |
+| 3 | `range_processor` | Valida y filtra los rangos (NaN, fuera de rango, picos) y los convierte en rayos con dirección. | ¿Qué obstáculos detecto ahora? | TP-19 a TP-22 |
+| 4 | `local_world_model` | Rejilla 2D alrededor del dron (libre/ocupado/desconocido) con inflado y expiración de obstáculos viejos. | ¿Cómo es el entorno cercano? | TP-23 a TP-25 |
+| 0 | `mission_manager` | Lee los waypoints del YAML y lleva la máquina de estados de la misión (despegar, navegar, aterrizar, abortar). | ¿Adónde tengo que ir ahora? | TP-26 a TP-28 |
+| 5 | `global_planner` | A* sobre el mapa local, con replan, timeout y estado de fallo. | ¿Por dónde voy? | TP-29 a TP-31 |
+| 6 | `path_processor` | Simplifica la ruta (shortcut por línea de visión), genera el lookahead y limita la velocidad. | ¿Cómo suavizo la ruta? | TP-32, TP-33 |
+| 7 | `local_navigator` | Sigue la ruta, aplica evitación reactiva y pide replan si hace falta. | ¿Qué hago en este instante? | TP-34 a TP-36 |
+| 8 | `safety_supervisor` | Anula la navegación normal (`SLOW`, `HOVER`, `LAND`, `ABORT`) por obstáculo cercano, pose vieja, pérdida de sensores, geofence, altura o planner sin ruta. | ¿Es seguro hacer esto? | TP-37 a TP-40 |
+| 9 | `telemetry` | Métricas de frecuencia, latencia y distancia mínima. | ¿Qué tal ha ido? | TP-41 |
+| 9 | `hackathon_tests` | Ejecuta los escenarios T01–T16 (pared, pasillo, obstáculo que aparece, pérdida de localización…) y evalúa el resultado. | ¿El stack aguanta? | TP-41 |
+| – | `hackathon_bringup` | Sin nodo propio: launch files y configuración YAML (mundos, misiones, escenarios, frames). | ¿Cómo arranco todo? | TP-12 |
+| – | `hackathon_interfaces` | Sin nodo: define los mensajes y servicios propios. | ¿Qué formato tienen los datos? | TP-06 |
+
+La columna "Módulo" es la numeración de la arquitectura del [roadmap](roadmap.md#módulos-y-paquetes).
+
+## Estructura de un paquete
+
+Todos los paquetes Python siguen el mismo patrón (ejemplo: `state_monitor`):
+
+```text
+state_monitor/
+├── package.xml                 # nombre y dependencias (lo lee colcon)
+├── setup.py / setup.cfg        # instalación del paquete y ejecutables
+├── resource/state_monitor      # marcador vacío que ROS usa para encontrar el paquete
+├── state_monitor/
+│   ├── state_monitor_node.py   # envoltorio ROS: parámetros, publishers, subscribers, timers
+│   └── health.py               # lógica pura, sin rclpy
+└── test/
+    └── test_health.py          # tests pytest de la lógica pura
+```
+
+La lógica se separa del nodo (regla 6) para poder probarla con `pytest` en milisegundos, sin lanzar ROS. El nodo solo conecta esa lógica con los topics.
+
+**Estado actual:** cada `*_node.py` documenta en su cabecera qué publica, a qué se suscribe y qué parámetros tiene, pero aún no implementa nada (salvo el smoke test de TP-06: `simulation_adapter` publica una pose fija y `state_monitor` la reenvía a `/hk/state`; ver `scripts/smoke_test.sh`). Las funciones de lógica lanzan `NotImplementedError` y los tests están marcados como `skip`. Cada TP posterior rellena su parte; la columna "TPs" de la tabla anterior indica cuál.
+
+## Sensores: qué llega al stack
+
+| Sensor | Dónde aparece | Notas |
+|---|---|---|
+| Lighthouse | Indirectamente en `/hk/adapter/odom` | El EKF onboard lo fusiona en la pose. |
+| Flow Deck: sensor de flujo óptico (PMW3901) | Indirectamente en `/hk/adapter/odom` (sobre todo en la velocidad) | Es una cámara de muy baja resolución, pero el firmware solo expone el desplazamiento medido (`motion.deltaX`, `motion.deltaY`), no la imagen. No hay topic de imagen. |
+| Flow Deck: ToF inferior (VL53L1x) | `MultiRange.down` | Altura sobre el suelo. También lo usa el EKF. |
+| Multi-ranger | `MultiRange.front/back/left/right/up` | Cinco rayos; ver REP-117 en el mensaje. |
+| IMU | Indirectamente en `/hk/adapter/odom` | Solo la usan el EKF y el controlador onboard. |
+
+Si hiciera falta el flujo óptico crudo (por ejemplo, para diagnosticar superficies sin textura), `cf_adapter` puede pedirlo a Crazyswarm2 como variables de log (`motion.deltaX`, `motion.deltaY`, `motion.squal`). Hoy no forma parte de la API.
+
 ## Reglas
 
 1. **Solo `cf_adapter` conoce Crazyswarm2.** Ningún otro paquete usa topics o servicios `/cfXXX/...` (TP-09).
@@ -10,6 +98,7 @@ Contrato entre paquetes. Si cambian un topic, un mensaje o un servicio, actualic
 4. Todo el stack consume **un único estado**: `/hk/state` (TP-14).
 5. Unidades SI (m, s, rad), ejes REP-103 (x adelante, y izquierda, z arriba) y rangos según REP-117 (`+inf` sin retorno, `-inf` demasiado cerca, `NaN` inválido).
 6. La lógica va en módulos de **Python puro** (sin `rclpy`) dentro de cada paquete, y el `*_node.py` solo hace de envoltorio ROS. Así la lógica se prueba con pytest sin lanzar ROS.
+7. **Parámetros:** nombres en `snake_case`, en unidades SI (`state_timeout` en s, `z_max` en m). Los valores viven en `hackathon_bringup/config/*.yaml`, no en el código: la sección `/**` tiene los compartidos (`map_frame`, `base_frame`, `z_min`…) y cada nodo tiene su sección con su nombre. El nodo declara cada parámetro con un valor por defecto y lo lista en la cabecera de su `*_node.py`.
 
 ## Grafo de nodos
 

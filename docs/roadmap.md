@@ -22,7 +22,7 @@ Roadmap del equipo para el reto **Autonomous Navigation** de la Mobile Robotics 
 
 | Bloque | Rango | Gate (criterio de salida) | Estado |
 |---|---|---|---|
-| A — Foundation and reproducibility | 0–12% | Cualquier integrante clona el repo, lo abre desde WSL y compila un workspace ROS 2 limpio. | 🟡 |
+| A — Foundation and reproducibility | 0–12% | Cualquier integrante clona el repo, lo abre desde WSL y compila un workspace ROS 2 limpio. | ✅ |
 | B — Crazyflie stack and simulation adapter | 12–25% | Nuestro software recibe estado simulado y envía setpoints por una interfaz conectable después a Crazyswarm2. | 🟡 |
 | C — State, frames and localization health | 25–39% | Hay un estado único y coherente del dron, frames validados e indicador explícito de salud. | ⬜ |
 | D — Multi-ranger perception and local world model | 39–55% | Los cinco rangos producen obstáculos coherentes en un mapa local y los obstáculos viejos desaparecen. | ⬜ |
@@ -31,7 +31,7 @@ Roadmap del equipo para el reto **Autonomous Navigation** de la Mobile Robotics 
 | G — Safety, robustness and fault injection | 82–94% | Ningún fallo simple ensayado hace que el stack siga ciegamente con comandos normales. | ⬜ |
 | H — Native Ubuntu and event-ready release | 94–100% | El repo se clona en Ubuntu nativo y lanza el stack completo con configuración de evento. | ⬜ |
 
-**Avance estimado:** ~13% (TP-01 a TP-05 y TP-07 hechos; TP-06 parcial).
+**Avance estimado:** ~15% (TP-01 a TP-07 hechos; bloque A completo).
 
 ## Plan priorizado 4–9 de octubre
 
@@ -142,9 +142,9 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [x] **TP-05 — ROS 2 Humble development stack** [7–10%] · P0 · ✅
   - `colcon` y `rosbag2` verificados en [environment_matrix.md](environment_matrix.md).
   - **DoD:** un workspace mínimo compila y ejecuta.
-- [ ] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · 🟡
+- [x] **TP-06 — Workspace and common interfaces** [10–12%] · P0 · ✅
   - Crear `ros2_ws/src` y `hackathon_interfaces`. Definir convenciones de nombres de topics, frames y parámetros. Launch de smoke test.
-  - Hecho: esqueleto de los 14 paquetes, mensajes propios, [interfaces.md](interfaces.md) y `simulation.launch.py`. Falta: que los nodos de ejemplo se comuniquen de verdad.
+  - Hecho: esqueleto de los 14 paquetes, mensajes propios, [interfaces.md](interfaces.md) (con guía del stack y convención de parámetros) y `simulation.launch.py`. Smoke test `scripts/smoke_test.sh`: `simulation_adapter` publica una pose fija en `/hk/adapter/odom` y `state_monitor` la reenvía a `/hk/state`.
   - **DoD:** `colcon build --symlink-install` limpio y los nodos de ejemplo se comunican.
 
 ### Bloque B — Crazyflie stack and simulation adapter (12–25%)
@@ -408,3 +408,18 @@ Waypoints → Mission Manager → A* Planner ← Rolling Occupancy Grid ← Mult
 **Checklist final:** clone limpio compila · simulación end-to-end · mission manager · pose y localization health · modelo del Multi-ranger · rolling map · A* y replan · path follower · evitación local · safety supervisor · rosbag/logging · campaña de fault injection · Ubuntu nativo preparado · runbook listo.
 
 **Mínimo para el evento (P0):** todo lo anterior excepto rolling map, A* y replan, Ubuntu nativo y la campaña completa de fault injection. Esas piezas quedan como P1.
+
+## Reparto del trabajo — equipo de 3
+
+TP-01 a TP-07 ya completados. Cada persona desarrolla su frente en paralelo, respetando el contrato de `docs/interfaces.md`.
+
+| Responsable | MVP / P0 | Después del MVP |
+|---|---|---|
+| **Persona 1 (tú): simulación e integración** | TP-08, 09, 10, 12 y 42-C/E | TP-11, 40, 41 y 42-A/B/D |
+| **Persona 2: percepción y seguridad** | TP-13, 14, 15, 17, 19, 20, 37, 38 y 39 | TP-18, 21–25 |
+| **Persona 3: misión y navegación** | TP-26, 32, 34 y ruta directa para el MVP | TP-16, 27–30, 33, 35, 36; TP-31 (P2) al final |
+
+- **Primera integración:** persona 1 prepara simulador y launch (TP-10/12); persona 2, frames, estado y supervisor mínimo (TP-13/14/37); persona 3, misión y seguimiento (TP-26/32). Meta conjunta: T01, un waypoint pasando por seguridad; después T02, varios waypoints.
+- **Enlace de navegación:** persona 3 implementa la ruta directa y conecta `/hk/path` con `/hk/path/processed` mediante un reenvío o configura el navegador para consumir la ruta directa. A* y simplificación siguen siendo P1.
+- **Coordinación:** persona 1 mantiene interfaces, launch y YAML compartidos con aportes de los colegas. Persona 2 publica la salud de localización; persona 3 aplica la política de velocidad de TP-16.
+- **Entregas:** ramas propias y PRs pequeños con lógica, conexión ROS y pruebas. Integrar diariamente; iniciar P1 cuando el MVP esté estable.
