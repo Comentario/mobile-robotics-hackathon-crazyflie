@@ -15,6 +15,10 @@
     warning_distance: 0.6    # m
     critical_distance: 0.3  # m
     ttc_threshold: 1.5          # s
+    range_min: 0.02
+    range_max: 4.0
+    drone_radius: 0.08
+    random_seed: 42
 
 simulation_adapter:
   ros__parameters:
