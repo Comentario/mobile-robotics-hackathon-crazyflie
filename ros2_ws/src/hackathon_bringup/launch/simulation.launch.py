@@ -16,7 +16,8 @@ from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from hackathon_bringup.stack import param_files, stack_nodes, static_sensor_tfs
+from hackathon_bringup.stack import (param_files, stack_nodes, static_sensor_tfs,
+                                    config_file, shared_frames, stop_on_exit)
 
 
 def _setup(context):
@@ -25,23 +26,25 @@ def _setup(context):
     arg = lambda name: LaunchConfiguration(name).perform(context)  # noqa: E731
 
     scenario_name = arg('scenario')
-    scenario_file = os.path.join(config_dir, 'scenarios', scenario_name + '.yaml')
+    scenario_file = config_file(config_dir, os.path.join('scenarios', scenario_name + '.yaml'))
     with open(scenario_file, encoding='utf-8') as f:
         scenario = yaml.safe_load(f)
 
     params = param_files(config_dir, arg('params'), arg('overlay'))
+    world_file = config_file(config_dir, scenario['world'])
+    mission_file = config_file(config_dir, scenario['mission'])
     extra = {'scenario_name': scenario_name}
 
     nodes = [Node(
         package='simulation_adapter', executable='sim_node', name='simulation_adapter',
         output='screen',
         parameters=params + [extra, {
-            'world_file': os.path.join(config_dir, scenario['world']),
+            'world_file': world_file,
             'scenario_file': scenario_file,
         }],
     )]
-    nodes += static_sensor_tfs(config_dir)
-    nodes += stack_nodes(params, os.path.join(config_dir, scenario['mission']), extra)
+    nodes += static_sensor_tfs(config_dir, shared_frames(params))
+    nodes += stack_nodes(params, mission_file, extra)
 
     if arg('evaluate') == 'true':
         # Al terminar la evaluación se cierra todo el launch (necesario para run_all_scenarios.sh).
@@ -57,7 +60,8 @@ def _setup(context):
         rviz_args = ['-d', rviz_config] if os.path.exists(rviz_config) else []
         nodes.append(Node(package='rviz2', executable='rviz2', arguments=rviz_args))
 
-    return nodes
+    processes = [node for node in nodes if isinstance(node, Node)]
+    return stop_on_exit(processes) + nodes
 
 
 def generate_launch_description():
