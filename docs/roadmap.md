@@ -155,10 +155,11 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [x] **TP-08 — Study Crazyflie command hierarchy** [15–17%] · P0 · ✅
   - Documentar takeoff, land, `go_to` y los setpoints de posición/velocidad (`cmd_position`, `cmd_vel_legacy`, `cmd_full_state`, etc.). Confirmar que el control de bajo nivel queda onboard. Documentar los watchdogs y qué pasa si se dejan de enviar setpoints.
   - **DoD:** `docs/crazyflie_command_interface.md` aprobado.
-  - Revisión completada (7 oct): comandos, prioridades y watchdogs documentados; `scripts/verify_tp08.py` verifica callbacks y física SIL. Límites de simulación y confirmaciones pendientes de hardware explícitos en el documento. TP-09 sigue pendiente.
-- [ ] **TP-09 — Hardware abstraction interface** [17–19%] · P0 · ⬜
+  - Revisión completada (7 oct): comandos, prioridades y watchdogs documentados; `scripts/verify_tp08.py` verifica callbacks y física SIL. Límites de simulación y confirmaciones pendientes de hardware explícitos en el documento.
+- [x] **TP-09 — Hardware abstraction interface** [17–19%] · P0 · ✅
   - API ROS propia para `state`, `ranges`, `command`, `takeoff`, `land` y `emergency`.
   - **DoD:** ningún planner depende de nombres internos de Crazyswarm2.
+  - Implementado: pose/odom/TF → API propia, scan cardinal y logging vertical opcional, POSITION/VELOCITY XY/HOVER → FullState, servicios con respuesta/timeout y bloqueo de streaming durante transiciones. 29 pruebas pasan (lógica, transporte ROS con mocks y conexión al SIL); hardware y logging real pendientes del runbook. Contrato y configuración en `docs/interfaces.md`.
 - [ ] **TP-10 — Simulation adapter** [19–22%] · P0 · ⬜
   - Nodo que publica pose y rangos sintéticos (raycast contra obstáculos definidos en YAML) con la misma API que el hardware, acepta setpoints e integra un movimiento simple. No hace falta Gazebo.
   - Motivo: el backend `sim` de Crazyswarm2 no publica rangos del Multi-ranger (ver "Limitación actual" en el README).

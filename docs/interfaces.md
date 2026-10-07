@@ -76,7 +76,7 @@ state_monitor/
 
 La lógica se separa del nodo (regla 6) para poder probarla con `pytest` en milisegundos, sin lanzar ROS. El nodo solo conecta esa lógica con los topics.
 
-**Estado actual:** cada `*_node.py` documenta en su cabecera qué publica, a qué se suscribe y qué parámetros tiene, pero aún no implementa nada (salvo el smoke test de TP-06: `simulation_adapter` publica una pose fija y `state_monitor` la reenvía a `/hk/state`; ver `scripts/smoke_test.sh`). Las funciones de lógica lanzan `NotImplementedError` y los tests están marcados como `skip`. Cada TP posterior rellena su parte; la columna "TPs" de la tabla anterior indica cuál.
+**Estado actual:** `cf_adapter` implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. Los demás paquetes siguen mayormente como esqueletos, salvo el smoke test de TP-06: `simulation_adapter` publica una pose fija y `state_monitor` la reenvía a `/hk/state`. Cada TP posterior completa su parte; la numeración de referencia está en el roadmap.
 
 ## Sensores: qué llega al stack
 
@@ -190,14 +190,43 @@ map ──(state_monitor)──> base_link ──(static, config/frames.yaml)─
                                                                   └─> down_tof
 ```
 
-Crazyswarm2 publica su propio TF (`world -> cfXXX`). No lo usamos directamente: `cf_adapter` convierte la pose a `/hk/adapter/odom` y `state_monitor` publica `map -> base_link`, igual que en simulación. Por eso `odom` no se usa por ahora (TP-13).
+Crazyswarm2 publica su propio TF (`world -> cfXXX`). En SIL, `cf_adapter` puede leerlo para publicar `/hk/adapter/odom`; en hardware puede consumir odometría o pose. El resto del stack consume `/hk/state`, y `state_monitor` publica `map -> base_link`. El frame llamado `odom` no se usa por ahora; el mensaje `nav_msgs/Odometry` sí.
 
-## Lado Crazyswarm2 (pendiente de TP-08)
+## Adapter Crazyswarm2 — TP-09
 
-Por confirmar con `ros2 topic list` / `ros2 service list` durante un vuelo, ya sea con `backend:=sim` o con hardware:
+TP-08 y las limitaciones del SIL se documentan en [crazyflie_command_interface.md](crazyflie_command_interface.md). Solo `cf_adapter` conoce los endpoints del robot; sus nombres pueden cambiar mediante parámetros sin modificar los paquetes de los colegas.
 
-- La pose, la odometría y el `scan` del Multi-ranger solo se publican si se activan en `firmware_logging` de `crazyflies.yaml`. Eso explicaría por qué no aparecieron en la prueba de `hello_world`.
-- Setpoints de streaming (`cmd_position`, `cmd_hover`, `cmd_full_state`…): frecuencia mínima y watchdog del firmware.
-- El orden de los rangos dentro del `scan` y cómo se representa "sin retorno".
+| Parámetro | Uso / valor por defecto |
+|---|---|
+| `robot_name`, `group_mask` | Robot `cf231`, grupo `0` |
+| `map_frame`, `base_frame`, `source_frame` | `map`, `base_link`, `world` |
+| `state_source` | `odom` (por defecto), `pose` o `tf` |
+| `odom_topic`, `pose_topic`, `scan_topic` | Vacío usa `/<robot>/odom`, `/<robot>/pose`, `/<robot>/scan` |
+| `odom_linear_frame`, `odom_angular_units` | Convención de entrada: `body`/`world`, `radians`/`degrees`. Por defecto, ROS estándar: `body`, `radians` |
+| `vertical_ranges_topic` | Vacío desactiva datos verticales. Si se configura, recibe `LogDataGeneric` con **exactamente** `[range.up, range.zrange]` en mm |
+| `state_timeout`, `range_timeout`, `command_timeout` | Edad máxima en segundos de estado, rangos y comandos; `0.3`, `0.3`, `0.5` |
+| `service_timeout` | `2.0` s de reloj monotónico; funciona aunque se pause `/clock` |
+| `reference_initial_dt`, `reference_max_dt` | Integración de velocidad: primer paso `0.05` s; máximo intervalo `0.1` s |
+| `land_height`, `streaming_valid_ms` | Altura final `0.0` m; argumento de notify `100` ms, cuyo efecto depende del firmware (ver TP-08) |
 
-Todo eso se resuelve dentro de [`cf_adapter/mapping.py`](../ros2_ws/src/cf_adapter/cf_adapter/mapping.py).
+**Frames y estado:** `source_frame` debe coincidir en origen y orientación con `map_frame`; el adapter no realiza una transformación de calibración entre ambos. Esta correspondencia se debe confirmar en TP-13 y en hardware. Preserva timestamps y rechaza estado vencido, de otro robot/frame o con pose inválida. Odometría estándar conserva twist en el frame del cuerpo; el servidor `cflib` instalado entrega velocidad lineal global y gyro en grados/s, por lo que `event.yaml` configura `world`/`degrees` y se transforman también las covarianzas. Confirmar esas convenciones al elegir otro backend. Fuentes de pose/TF no miden velocidad: se publica twist cero con covarianza alta, no una medición fiable de velocidad cero.
+
+**Rangos:** el servidor `cflib` instalado publica cuatro rayos `[back, right, front, left]` con ángulo inicial `-pi` y paso `pi/2`. El adapter identifica direcciones por los ángulos y conserva valores REP-117. Los rangos `up` y `down` son `NaN` si no hay logging vertical válido; no se inventan medidas. El logging vertical opcional se convierte de mm a m y se combina al recibir un scan horizontal. Si contribuye información vertical, el mensaje usa el timestamp más antiguo de ambos streams; los datos verticales vencidos se descartan. La frecuencia de salida sigue la del scan horizontal.
+
+**Comandos:** solo se acepta `/hk/cmd/safe` en `map_frame`, con timestamp reciente y estado válido. POSITION se convierte a FullState. HOVER captura posición/yaw medidos al entrar y mantiene esa referencia. VELOCITY integra XY hacia referencias absolutas y añade velocidad como feedforward; mantiene `position.z` y exige `velocity.z=0`. No es control nativo exclusivamente por velocidad. Un intervalo excesivo o retroceso del reloj reinicia/rechaza la integración; no se regeneran comandos cuando el supervisor deja de publicar. El filtrado de obstáculos, geofence y watchdog de misión corresponden a `safety_supervisor`.
+
+**Servicios:** `success=true` significa que Crazyswarm2 respondió, no que acabó la maniobra. Se espera su respuesta con timeout; fallos y servicios ausentes devuelven `success=false`. Durante el cambio a órdenes de alto nivel se bloquean setpoints. Si había streaming, notify debe responder antes de enviar la siguiente orden; su efecto físico sigue dependiendo del backend. Después de aterrizaje/emergencia o un fallo, el streaming queda bloqueado. Un nuevo despegue confirmado lo habilita cuando transcurre su duración solicitada. La emergencia invalida transiciones pendientes, pero no puede cancelar una orden ya enviada al servidor ni garantizar un efecto que el backend no implemente.
+
+**Configuración:** activar `odom` (o `pose`) y `scan` en `firmware_logging` del servidor real, y el bloque vertical opcional con el orden indicado. Sin ellos el adapter no publica datos ficticios. En SIL usar el overlay `cs2_sim.yaml`: `state_source=tf`, `use_sim_time=true`; no hay rangos reales. Estos requisitos de hardware se confirman con los mentores, no mediante pruebas sintéticas.
+
+Pruebas desde la raíz del repo, después de compilar los paquetes:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+export PYTHONPATH="$PWD/ros2_ws/src/cf_adapter:/home/asus/crazyflie-firmware/build${PYTHONPATH:+:$PYTHONPATH}"
+export ROS_DOMAIN_ID=89 ROS_LOCALHOST_ONLY=1 ROS_LOG_DIR=/tmp/tp09-ros-logs
+/usr/bin/python3 -m pytest ros2_ws/src/cf_adapter/test -q
+```
+
+Usar un dominio ROS de pruebas sin otros nodos y adaptar la ruta de bindings a cada equipo. Las pruebas ROS usan telemetría y servicios sintéticos; la prueba SIL usa callbacks del servidor **a través del transporte ROS y del adapter**, con física `np`. Sin bindings instalados, la prueba SIL se omite explícitamente. Ninguna prueba conecta Crazyradio ni valida vuelo real.

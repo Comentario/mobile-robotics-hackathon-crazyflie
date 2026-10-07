@@ -6,4 +6,6 @@ safety_supervisor:
 
 cf_adapter:
   ros__parameters:
-    down_tof_available: false
+    use_sim_time: true
+    state_source: tf
+    source_frame: world
