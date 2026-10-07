@@ -2,15 +2,47 @@
 
 This package is the only project component allowed to depend directly on
 Crazyswarm2-specific topics, services, and message types.
+
+Estado (TP-09)
+--------------
+  Hecho:      equipo -> dron: /hk/cmd/safe, /hk/takeoff, /hk/land, /hk/emergency.
+  Hecho:      dron -> equipo: pose en /hk/adapter/odom (ver "Fuente de la pose").
+  Pendiente:  dron -> equipo: rangos en /hk/adapter/ranges (orden del scan sin
+              confirmar con hardware; ver interfaces.md, "Lado Crazyswarm2").
+
+Fuente de la pose (parámetro pose_source)
+-----------------------------------------
+  'topic'  Dron real: se suscribe a /<robot_name>/<pose_topic> (geometry_msgs/PoseStamped),
+           que Crazyswarm2 publica si 'pose' está activado en firmware_logging de
+           crazyflies.yaml.
+  'tf'     Simulación de Crazyswarm2 (backend:=sim): ese backend NO publica
+           /<robot>/pose (verificado en TP-08), solo el TF world -> <robot>. Se lee
+           ese TF a pose_rate Hz.
+
+  restamp_pose: si es true, header.stamp = hora de llegada a este nodo (reloj del
+  laptop). Necesario con 'tf' en simulación, porque Crazyswarm2 sim usa su propio
+  reloj (/clock). Con el dron real, comprobar primero si la hora de /cf231/pose ya
+  es la del laptop (ver docs/frames.md y el runbook).
+
+Semántica de Setpoint (hackathon_interfaces/msg/Setpoint.msg)
+------------------------------------------------------------
+  POSITION  ir a position con yaw.
+  VELOCITY  seguir velocity en XY manteniendo position.z.
+  HOVER     mantener la posición actual.
+  cmd_full_state es siempre una orden de POSICIÓN, así que VELOCITY y HOVER se
+  convierten a una posición objetivo usando la última pose conocida del dron.
 """
 
 from functools import partial
 
 import rclpy
 from rclpy.node import Node
+from rclpy.time import Time
 
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty, Trigger
+from tf2_ros import Buffer, TransformException, TransformListener
 
 from crazyflie_interfaces.msg import FullState
 from crazyflie_interfaces.srv import (
@@ -31,6 +63,11 @@ from .mapping import (
     yaw_to_quaternion,
 )
 
+# Modo VELOCITY: la posición objetivo se coloca VELOCITY_LEAD s por delante de la
+# pose actual en la dirección de la velocidad. Con setpoints a ~20 Hz, el objetivo
+# avanza continuamente y el dron se mueve a la velocidad pedida.
+VELOCITY_LEAD = 0.2  # s
+
 
 class CrazyflieAdapter(Node):
     """Expose the project hardware API and translate it to Crazyswarm2."""
@@ -42,6 +79,14 @@ class CrazyflieAdapter(Node):
         self.declare_parameter('group_mask', 0)
         self.declare_parameter('land_height', 0.0)
         self.declare_parameter('streaming_valid_ms', 100)
+        # Pose del dron -> /hk/adapter/odom
+        self.declare_parameter('map_frame', 'map')
+        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('pose_source', 'topic')    # 'topic' | 'tf'
+        self.declare_parameter('pose_topic', 'pose')      # /<robot_name>/<pose_topic>
+        self.declare_parameter('world_frame', 'world')    # frame padre del TF (modo 'tf')
+        self.declare_parameter('pose_rate', 50.0)         # Hz (modo 'tf')
+        self.declare_parameter('restamp_pose', False)
 
         self.robot_name = (
             self.get_parameter('robot_name')
@@ -67,15 +112,26 @@ class CrazyflieAdapter(Node):
             .integer_value
         )
 
+        self.map_frame = self.get_parameter('map_frame').value
+        self.base_frame = self.get_parameter('base_frame').value
+        self.pose_source = self.get_parameter('pose_source').value
+        self.world_frame = self.get_parameter('world_frame').value
+        self.restamp_pose = self.get_parameter('restamp_pose').value
+
+        # Última pose conocida (x, y, z) del dron, para VELOCITY y HOVER.
+        self._last_position = None
+        self._hover_point = None
+        self._last_tf_stamp = None
+
         # Project-facing publishers.
-        # Data will be populated once the real Crazyflie state and sensor
-        # endpoints are confirmed.
         self.odom_pub = self.create_publisher(
             Odometry,
             '/hk/adapter/odom',
             10,
         )
 
+        # TODO(TP-09 / Dresden): rellenar desde /<robot>/scan cuando se confirme
+        # el orden de los rangos en el hardware real.
         self.ranges_pub = self.create_publisher(
             MultiRange,
             '/hk/adapter/ranges',
@@ -137,6 +193,20 @@ class CrazyflieAdapter(Node):
             topic(self.robot_name, 'notify_setpoints_stop'),
         )
 
+        # Crazyswarm2 pose source -> /hk/adapter/odom.
+        if self.pose_source == 'tf':
+            self.tf_buffer = Buffer()
+            self.tf_listener = TransformListener(self.tf_buffer, self)
+            pose_rate = self.get_parameter('pose_rate').value
+            self.create_timer(1.0 / pose_rate, self._poll_tf_pose)
+            pose_desc = f'TF {self.world_frame} -> {self.robot_name} a {pose_rate} Hz'
+        elif self.pose_source == 'topic':
+            pose_topic = topic(self.robot_name, self.get_parameter('pose_topic').value)
+            self.create_subscription(PoseStamped, pose_topic, self._pose_callback, 10)
+            pose_desc = f'topic {pose_topic}'
+        else:
+            raise ValueError(f"pose_source debe ser 'topic' o 'tf', no '{self.pose_source}'")
+
         self.get_logger().info(
             f'cf_adapter ready for robot "{self.robot_name}"'
         )
@@ -145,7 +215,55 @@ class CrazyflieAdapter(Node):
             'Project API: /hk/cmd/safe, /hk/takeoff, /hk/land, '
             '/hk/emergency, /hk/adapter/odom, /hk/adapter/ranges'
         )
+        self.get_logger().info(
+            f'Pose desde {pose_desc} (restamp_pose={self.restamp_pose})'
+        )
 
+    # ------------------------------------------------------------------
+    # Dron -> equipo: pose
+    # ------------------------------------------------------------------
+    def _pose_callback(self, msg):
+        """Dron real: PoseStamped de Crazyswarm2 -> Odometry del equipo."""
+        self._publish_odom(msg.header.stamp, msg.pose.position, msg.pose.orientation)
+
+    def _poll_tf_pose(self):
+        """Simulación de Crazyswarm2: lee el TF world -> robot y lo publica como pose."""
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.world_frame, self.robot_name, Time()
+            )
+        except TransformException:
+            return    # aún no hay TF: no se publica nada (el monitor dirá LOST)
+
+        # Solo publicar si el TF es nuevo (si Crazyswarm2 deja de publicar, no
+        # inventamos poses repetidas: el monitor de salud debe notarlo).
+        stamp = (tf.header.stamp.sec, tf.header.stamp.nanosec)
+        if stamp == self._last_tf_stamp:
+            return
+        self._last_tf_stamp = stamp
+
+        t = tf.transform.translation
+        self._publish_odom(tf.header.stamp, t, tf.transform.rotation)
+
+    def _publish_odom(self, stamp, position, orientation):
+        """Construye y publica /hk/adapter/odom (frame map -> base_link)."""
+        odom = Odometry()
+        odom.header.stamp = (
+            self.get_clock().now().to_msg() if self.restamp_pose else stamp
+        )
+        odom.header.frame_id = self.map_frame
+        odom.child_frame_id = self.base_frame
+        odom.pose.pose.position.x = position.x
+        odom.pose.pose.position.y = position.y
+        odom.pose.pose.position.z = position.z
+        odom.pose.pose.orientation = orientation
+        self.odom_pub.publish(odom)
+
+        self._last_position = (position.x, position.y, position.z)
+
+    # ------------------------------------------------------------------
+    # Equipo -> dron: setpoints
+    # ------------------------------------------------------------------
     def _command_callback(self, msg):
         """Translate a project Setpoint to a Crazyswarm2 FullState command."""
         if msg.mode not in (
@@ -158,13 +276,41 @@ class CrazyflieAdapter(Node):
             )
             return
 
-        command = FullState()
+        # VELOCITY y HOVER necesitan saber dónde está el dron.
+        if msg.mode != Setpoint.MODE_POSITION and self._last_position is None:
+            self.get_logger().warn(
+                'Setpoint VELOCITY/HOVER rechazado: aún no se conoce la pose del dron',
+                throttle_duration_sec=2.0,
+            )
+            return
 
+        if msg.mode != Setpoint.MODE_HOVER:
+            self._hover_point = None
+
+        command = FullState()
         command.header = msg.header
 
-        command.pose.position.x = msg.position.x
-        command.pose.position.y = msg.position.y
-        command.pose.position.z = msg.position.z
+        if msg.mode == Setpoint.MODE_POSITION:
+            target = (msg.position.x, msg.position.y, msg.position.z)
+            velocity = (0.0, 0.0, 0.0)
+        elif msg.mode == Setpoint.MODE_VELOCITY:
+            # XY: un poco por delante de la pose actual. Z: la altura pedida.
+            x, y, _ = self._last_position
+            target = (
+                x + msg.velocity.x * VELOCITY_LEAD,
+                y + msg.velocity.y * VELOCITY_LEAD,
+                msg.position.z,
+            )
+            velocity = (msg.velocity.x, msg.velocity.y, 0.0)
+        else:  # HOVER: quedarse donde estaba al recibir el primer HOVER.
+            if self._hover_point is None:
+                self._hover_point = self._last_position
+            target = self._hover_point
+            velocity = (0.0, 0.0, 0.0)
+
+        command.pose.position.x = target[0]
+        command.pose.position.y = target[1]
+        command.pose.position.z = target[2]
 
         qx, qy, qz, qw = yaw_to_quaternion(msg.yaw)
 
@@ -173,14 +319,9 @@ class CrazyflieAdapter(Node):
         command.pose.orientation.z = qz
         command.pose.orientation.w = qw
 
-        if msg.mode == Setpoint.MODE_VELOCITY:
-            command.twist.linear.x = msg.velocity.x
-            command.twist.linear.y = msg.velocity.y
-            command.twist.linear.z = msg.velocity.z
-        else:
-            command.twist.linear.x = 0.0
-            command.twist.linear.y = 0.0
-            command.twist.linear.z = 0.0
+        command.twist.linear.x = velocity[0]
+        command.twist.linear.y = velocity[1]
+        command.twist.linear.z = velocity[2]
 
         command.twist.angular.x = 0.0
         command.twist.angular.y = 0.0

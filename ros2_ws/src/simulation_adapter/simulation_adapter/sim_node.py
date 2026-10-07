@@ -21,16 +21,18 @@ Lógica: world.py (obstáculos + raycast), dynamics.py (modelo cinemático), fau
 
 Estado de implementación (TP-10 por incrementos)
 ------------------------------------------------
-  Incremento 1 (este):  dron que se mueve. /hk/cmd/safe, /hk/takeoff, /hk/land,
+  Incremento 1 (hecho): dron que se mueve. /hk/cmd/safe, /hk/takeoff, /hk/land,
                         /hk/emergency, /hk/adapter/odom (con ruido) y
                         /hk/sim/ground_truth (sin ruido).
-  Incremento 2:         fallos de pose (faults.py).
+  Incremento 2 (este):  fallos de pose y command_pause (faults.py), leídos del
+                        'faults' del escenario. Los rangos llegan en el incremento 4.
   Incremento 3:         límites de altura / techo.
   Incremento 4:         obstáculos y rangos (world.py): /hk/adapter/ranges y
                         /hk/sim/obstacles.
 """
 import math
 import random
+from collections import deque
 
 import rclpy
 import yaml
@@ -42,6 +44,10 @@ from hackathon_interfaces.msg import Setpoint
 from hackathon_interfaces.srv import Land, Takeoff
 
 from .dynamics import Command, KinematicDrone
+from .faults import FaultInjector
+
+# Segundos de historia de poses que se guardan (para el fallo pose_delay).
+POSE_HISTORY_SECONDS = 5.0
 
 
 class SimulationAdapter(Node):
@@ -61,10 +67,19 @@ class SimulationAdapter(Node):
         scenario_file = self.declare_parameter('scenario_file', '').value
 
         # Pose inicial: la 'start' del escenario, o el origen si no hay escenario.
+        # Fallos: la lista 'faults' del escenario (vacía si no hay escenario).
         start = [0.0, 0.0, 0.0, 0.0]   # x, y, z, yaw
+        faults = []
         if scenario_file:
             with open(scenario_file, encoding='utf-8') as f:
-                start = (yaml.safe_load(f) or {}).get('start', start)
+                scenario = yaml.safe_load(f) or {}
+            start = scenario.get('start', start)
+            faults = scenario.get('faults', []) or []
+        self.faults = FaultInjector(faults)
+        self._last_faults = []
+
+        # Historia de poses publicables (con ruido), para poder retrasarlas.
+        self.pose_history = deque(maxlen=int(POSE_HISTORY_SECONDS * state_rate))
 
         # --- Modelo del dron (lógica pura, dynamics.py) ----------------------
         self.drone = KinematicDrone(max_speed, max_accel, command_watchdog)
@@ -101,7 +116,8 @@ class SimulationAdapter(Node):
         self.create_timer(1.0 / state_rate, self._publish_state)
 
         self.get_logger().info(
-            f'simulation_adapter listo (incremento 1). Pose inicial: {start}'
+            f'simulation_adapter listo (incremento 2). Pose inicial: {start}. '
+            f'Fallos del escenario: {[f["type"] for f in faults] or "ninguno"}'
         )
 
     # ------------------------------------------------------------------
@@ -109,6 +125,10 @@ class SimulationAdapter(Node):
     # ------------------------------------------------------------------
     def _on_setpoint(self, msg):
         """Traduce el Setpoint ROS a un Command y se lo pasa al modelo."""
+        # Fallo command_pause: el comando "se pierde por el camino".
+        if self.faults.drop_command(self.sim_time):
+            return
+
         mode = self._mode_names.get(msg.mode)
         if mode is None:
             self.get_logger().error(f'Setpoint con modo desconocido: {msg.mode}')
@@ -159,30 +179,61 @@ class SimulationAdapter(Node):
             self.get_logger().info(f'Modo: {self._last_mode} -> {self.drone.mode}')
             self._last_mode = self.drone.mode
 
-    def _publish_state(self):
-        """Publica la pose real (sin ruido) y la 'estimada' (con ruido)."""
-        stamp = self.get_clock().now().to_msg()
-        self.truth_pub.publish(self._make_odom(stamp, noise_std=0.0))
-        self.odom_pub.publish(self._make_odom(stamp, noise_std=self.pose_noise_std))
+        # Avisar en el log cuando empieza o termina un fallo.
+        active = self.faults.active_types(self.sim_time)
+        if active != self._last_faults:
+            self.get_logger().warn(
+                f't={self.sim_time:.1f} s  fallos activos: {active or "ninguno"}'
+            )
+            self._last_faults = active
 
-    def _make_odom(self, stamp, noise_std):
-        """Convierte el DroneState en un nav_msgs/Odometry."""
+    def _publish_state(self):
+        """Publica la pose real (sin ruido) y la 'estimada' (con ruido y fallos)."""
+        now = self.get_clock().now()
+        stamp_sec = now.nanoseconds * 1e-9
+
+        # Pose real: siempre, sin ruido ni fallos (solo para métricas).
+        self.truth_pub.publish(self._make_odom(self._sample(stamp_sec, noise_std=0.0)))
+
+        # Pose "estimada": con ruido, guardada en la historia y pasada por los fallos.
+        sample = self._sample(stamp_sec, noise_std=self.pose_noise_std)
+        self.pose_history.append(sample)
+        published = self.faults.apply_to_pose(self.sim_time, sample, self.pose_history)
+        if published is not None:
+            self.odom_pub.publish(self._make_odom(published))
+
+    def _sample(self, stamp_sec, noise_std):
+        """Foto del DroneState actual como dict (formato de faults.py)."""
         s = self.drone.state
+        return {
+            't': self.sim_time,
+            'stamp': stamp_sec,
+            'x': s.x + random.gauss(0.0, noise_std),
+            'y': s.y + random.gauss(0.0, noise_std),
+            'z': s.z + random.gauss(0.0, noise_std),
+            'yaw': s.yaw,
+            'vx': s.vx, 'vy': s.vy, 'vz': s.vz,
+        }
+
+    def _make_odom(self, sample):
+        """Convierte una muestra (dict) en un nav_msgs/Odometry."""
         msg = Odometry()
-        msg.header.stamp = stamp
+        sec = int(sample['stamp'])
+        msg.header.stamp.sec = sec
+        msg.header.stamp.nanosec = int((sample['stamp'] - sec) * 1e9)
         msg.header.frame_id = self.map_frame
         msg.child_frame_id = self.base_frame
 
-        msg.pose.pose.position.x = s.x + random.gauss(0.0, noise_std)
-        msg.pose.pose.position.y = s.y + random.gauss(0.0, noise_std)
-        msg.pose.pose.position.z = s.z + random.gauss(0.0, noise_std)
+        msg.pose.pose.position.x = sample['x']
+        msg.pose.pose.position.y = sample['y']
+        msg.pose.pose.position.z = sample['z']
         # Yaw -> cuaternión (rotación solo alrededor de z).
-        msg.pose.pose.orientation.z = math.sin(s.yaw / 2.0)
-        msg.pose.pose.orientation.w = math.cos(s.yaw / 2.0)
+        msg.pose.pose.orientation.z = math.sin(sample['yaw'] / 2.0)
+        msg.pose.pose.orientation.w = math.cos(sample['yaw'] / 2.0)
 
-        msg.twist.twist.linear.x = s.vx
-        msg.twist.twist.linear.y = s.vy
-        msg.twist.twist.linear.z = s.vz
+        msg.twist.twist.linear.x = sample['vx']
+        msg.twist.twist.linear.y = sample['vy']
+        msg.twist.twist.linear.z = sample['vz']
         return msg
 
 
