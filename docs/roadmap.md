@@ -408,3 +408,18 @@ Waypoints → Mission Manager → A* Planner ← Rolling Occupancy Grid ← Mult
 **Checklist final:** clone limpio compila · simulación end-to-end · mission manager · pose y localization health · modelo del Multi-ranger · rolling map · A* y replan · path follower · evitación local · safety supervisor · rosbag/logging · campaña de fault injection · Ubuntu nativo preparado · runbook listo.
 
 **Mínimo para el evento (P0):** todo lo anterior excepto rolling map, A* y replan, Ubuntu nativo y la campaña completa de fault injection. Esas piezas quedan como P1.
+
+## Reparto del trabajo — equipo de 3
+
+TP-01 a TP-07 ya completados. Cada persona desarrolla su frente en paralelo, respetando el contrato de `docs/interfaces.md`.
+
+| Responsable | MVP / P0 | Después del MVP |
+|---|---|---|
+| **Persona 1 (tú): simulación e integración** | TP-08, 09, 10, 12 y 42-C/E | TP-11, 40, 41 y 42-A/B/D |
+| **Persona 2: percepción y seguridad** | TP-13, 14, 15, 17, 19, 20, 37, 38 y 39 | TP-18, 21–25 |
+| **Persona 3: misión y navegación** | TP-26, 32, 34 y ruta directa para el MVP | TP-16, 27–30, 33, 35, 36; TP-31 (P2) al final |
+
+- **Primera integración:** persona 1 prepara simulador y launch (TP-10/12); persona 2, frames, estado y supervisor mínimo (TP-13/14/37); persona 3, misión y seguimiento (TP-26/32). Meta conjunta: T01, un waypoint pasando por seguridad; después T02, varios waypoints.
+- **Enlace de navegación:** persona 3 implementa la ruta directa y conecta `/hk/path` con `/hk/path/processed` mediante un reenvío o configura el navegador para consumir la ruta directa. A* y simplificación siguen siendo P1.
+- **Coordinación:** persona 1 mantiene interfaces, launch y YAML compartidos con aportes de los colegas. Persona 2 publica la salud de localización; persona 3 aplica la política de velocidad de TP-16.
+- **Entregas:** ramas propias y PRs pequeños con lógica, conexión ROS y pruebas. Integrar diariamente; iniciar P1 cuando el MVP esté estable.
