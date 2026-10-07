@@ -8,13 +8,16 @@ Its purpose is to isolate the project navigation stack from the ROS interfaces e
 
 ## 1. Scope
 
+**TP-08 review completed (2026-10-07), scoped to the development baseline.** Endpoint discovery, callback/physics tests, and firmware source inspection are distinguished below. Hardware flight, ROS transport end-to-end behavior, and event firmware configuration are not validated by these tests. TP-09 implementation remains separate work.
+
 This document records the Crazyflie command interfaces verified on the current development baseline:
 
 | Component | Value |
 |---|---|
 | ROS 2 | Humble |
 | Crazyswarm2 / Crazyflie ROS packages | 1.0.7 |
-| Crazyflie firmware used by SIL | 2025.02 |
+| Firmware source inspected locally | `16c5630707e92830dcd16455a57b5560e5838735` (`2023.07-340-g16c56307`); not evidence of event firmware version |
+| SIL firmware bindings | Local `cffirmware` build; the previously stated `2025.02` version was not established by this review |
 | Backend inspected | `sim` |
 | Robot namespace | `/cf231` |
 
@@ -70,7 +73,7 @@ The project navigation stack must not depend directly on `/cf231/*`. Crazyswarm2
 
 ---
 
-## 3. Verified High-Level Services
+## 3. Identified High-Level Services
 
 The following high-level services were visible during the `sim` backend session.
 
@@ -198,6 +201,8 @@ Observed endpoints:
 
 Emergency commands are reserved for safety intervention and must not be treated as a normal landing mechanism.
 
+In the installed SIL, this callback only logs `emergency not yet implemented`; it does not provide an emergency-stop effect.
+
 ---
 
 ### 3.6 Arm
@@ -212,7 +217,7 @@ This service is available in the inspected graph and may be required depending o
 
 ---
 
-## 4. Verified Streaming Topics
+## 4. Identified Streaming Topics
 
 ### 4.1 Full State
 
@@ -254,6 +259,8 @@ The message contains:
 - acceleration.
 
 This interface is the most complete streaming setpoint available in the inspected backend.
+
+The callback/physics test below exercised this command. `CrazyflieSIL.cmdFullState` sets absolute position modes in XYZ: velocity is part of the full reference, not an independent velocity-only mode. Project HOVER and VELOCITY modes must not be assumed equivalent to copying their fields into FullState.
 
 ---
 
@@ -297,6 +304,8 @@ Interpretation:
 - `z_distance`: commanded hover height.
 
 The existence of a topic in the ROS graph confirms that the server subscribes to it, but does not by itself prove identical behavior across all backends. Functional behavior must be validated on the backend used at the event.
+
+The installed SIL callback logs `cmd_hover not yet implemented`; exclude it from functional navigation in this simulation baseline.
 
 ---
 
@@ -384,7 +393,7 @@ uint32 remain_valid_millisecs
 
 This service is used when streaming setpoints are being stopped.
 
-Conceptually:
+Intended hardware sequence, subject to backend validation:
 
 ```text
 Streaming navigation
@@ -400,9 +409,9 @@ High-level command
         +--> trajectory
 ```
 
-The parameter `remain_valid_millisecs` defines how long the previous streaming setpoint should remain valid during the transition.
+The request contains `remain_valid_millisecs`, but its effect is firmware-dependent. In the inspected local firmware, `crtp_commander.c::notifySetpointsStopDecoder` ignores this historical argument and calls `commanderRelaxPriority()` immediately. It is not a guaranteed delay or validity period.
 
-The project must use this transition mechanism when handing control back from streaming setpoints to high-level commands.
+Stop generating streaming commands before requesting the transfer; otherwise new streaming commands can take priority again. Check service errors before continuing. In the installed SIL, `notify_setpoints_stop` is unimplemented. The tested streaming-to-go_to transition raises `goTo from low-level modes not yet supported.` Landing after FullState was exercised successfully below; this does not prove an equivalent hardware transition.
 
 ---
 
@@ -412,7 +421,14 @@ The project must treat high-level commands and streaming setpoints as different 
 
 A streaming command path requires periodic command updates from the host. If that stream becomes stale, the safety layer must not continue assuming normal navigation.
 
-The exact firmware watchdog behavior and timeout values must be validated against the firmware and backend used at the event before hardcoding any safety timing.
+The local firmware source establishes the following behavior, not a measurement on event hardware:
+
+- `commander.h` assigns high-level priority 1 and CRTP streaming priority 2. `commanderSetSetpoint` accepts equal or higher priority; higher-than-high-level commands stop the onboard high-level planner. `commanderRelaxPriority` releases priority and supplies the last state to the high-level commander.
+- `supervisor.c` checks setpoint age: more than 500 ms raises a warning; more than 2000 ms raises a timeout.
+- In the flying state, warning selects `WarningLevelOut`: XY position modes are disabled, roll/pitch references are zeroed, yaw rate is zeroed, and Z is retained. Timeout selects an exception state; the supervisor override supplies a null setpoint to stop motors. This is not a normal automatic landing.
+- SIL does not execute that full commander/supervisor watchdog path. Withholding FullState updates for 3 simulated seconds retained the last target and continued control in the test.
+
+Source files inspected: `commander.c`, `commander.h`, `crtp_commander.c`, `supervisor.c` and `supervisor_state_machine.c` in the local firmware checkout at the revision above. Confirm actual event firmware, configuration and policy with mentors. Host timeouts remain configurable; do not rely on SIL to reproduce hardware failsafes.
 
 Project policy:
 
@@ -425,7 +441,9 @@ Project policy:
 
 ---
 
-## 7. Verified ROS Graph
+## 7. Previously Observed ROS Graph
+
+This inventory records the earlier session, not functional support or a guarantee that every endpoint is created by the current SIL server. `/all/arm` was recorded previously but is not created by the inspected SIL server code.
 
 During the inspected `sim` session, the following services were visible:
 
@@ -464,6 +482,8 @@ The following topic was explicitly not present:
 ---
 
 ## 8. Available Crazyflie Interfaces
+
+These are installed type definitions, not active endpoints. A topic name identifies a channel; its `msg` type defines each message. A service name identifies a request/response endpoint; its `srv` type defines both structures. An installed type can exist without any running endpoint using it.
 
 The installed `crazyflie_interfaces` package exposes the following relevant command interfaces.
 
@@ -559,11 +579,11 @@ The current command policy is:
 - use high-level `land` for normal landing;
 - keep `go_to` available for simple waypoint execution and diagnostics;
 - do not couple reactive navigation directly to `go_to`;
-- keep `cmd_full_state` as the primary fully verified streaming candidate in the current `sim` baseline;
-- treat `cmd_hover` as available in the inspected ROS graph, but validate behavior before depending on it;
+- use `cmd_full_state` as the streaming candidate exercised in the SIL callback/physics test, with absolute-position semantics and the limitations below;
+- exclude `cmd_hover` from functional SIL navigation because its callback is unimplemented; validate support on other backends;
 - do not assume `/cf231/cmd_position` exists in the current simulation backend;
 - exclude `cmd_vel_legacy` from the navigation baseline unless its exact semantics are explicitly required;
-- use `notify_setpoints_stop` when transitioning from streaming setpoints back to high-level commands;
+- validate `notify_setpoints_stop` and handover on hardware; SIL does not implement priority release, and streaming-to-go_to is unsupported in the tested sequence;
 - route all Crazyflie-specific commands through `cf_adapter`;
 - let `safety_supervisor` own the final command path before commands reach an adapter.
 
@@ -584,3 +604,39 @@ TP-08 is complete when:
 - the low-level flight controller is confirmed to remain onboard;
 - Crazyflie-specific ROS endpoints are isolated behind `cf_adapter`.
 
+The development-baseline documentation review satisfies these criteria. Event-specific hardware verification remains in the integration runbook. This does not imply TP-09 is complete.
+
+## 12. Reproducible SIL verification (2026-10-07)
+
+`scripts/verify_tp08.py` creates the installed Crazyswarm2 simulation server with `np` physics, the `mellinger` controller and only simulated `cf231`. It calls actual command callbacks directly and advances physics in 0.0005 s steps. No radio or hardware is used. This does not test ROS request transport, RViz, range sensing, obstacle navigation, or `cf_adapter`.
+
+Run from the repository root in this Ubuntu environment:
+
+```bash
+source /opt/ros/humble/setup.bash
+export PYTHONPATH="/home/asus/crazyflie-firmware/build${PYTHONPATH:+:$PYTHONPATH}"
+export ROS_LOG_DIR=/tmp/tp08-ros-logs
+/usr/bin/python3 scripts/verify_tp08.py
+```
+
+To watch the same sequence, replace the last command with:
+
+```bash
+/usr/bin/python3 scripts/verify_tp08.py --visual
+```
+
+Visual mode publishes the simulated transform and robot model, opens RViz with simulation time, and labels each command in the terminal. It limits TF publication to 50 Hz and prevents advancing faster than real time; CPU load can make it slower. Press Enter at the end to close RViz, or Ctrl+C to stop. `--visual --no-rviz` publishes visualization data for an external RViz in ROS domain 88. This is the Crazyswarm2 SIL test, not the project's obstacle simulator or navigation stack.
+
+The script isolates ROS in domain 88 on localhost and shuts down its simulation on exit. The bindings path is machine-specific; colleagues should use their own build path. Test values are simulation inputs, not approved hardware settings.
+
+| Check | Result |
+|---|---|
+| Takeoff to 0.5 m over 2 s; observe after 3 s | PASS: Z ≈ 0.428 m |
+| Absolute go_to to `(0.3, 0, 0.5)` over 2 s | PASS: X ≈ 0.299 m, Z ≈ 0.433 m |
+| FullState `(0.4, 0, 0.5)` at 50 Hz for 2 simulated seconds | PASS: X ≈ 0.409 m, Z ≈ 0.433 m |
+| Stop FullState for 3 simulated seconds | Last target retained: X ≈ 0.404 m, Z ≈ 0.433 m; no automatic landing |
+| notify_setpoints_stop, cmd_hover, emergency | Logs report unimplemented; command mode unchanged |
+| go_to after FullState and notify_setpoints_stop | Expected rejection: low-level transition unsupported |
+| Land to Z=0 over 2 s after FullState | PASS: reaches simulated ground after 3 s |
+
+Position acceptance tolerance is 0.12 m (0.15 m for landing). The persistent altitude offset of about 0.067 m is visible; these tests establish basic effects, not precise tracking or a tuned flight model. Trajectory upload/execution was identified but not exercised because it is outside the MVP.

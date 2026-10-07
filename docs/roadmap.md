@@ -152,9 +152,10 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [x] **TP-07 — Install Crazyswarm2** [12–15%] · P0 · ✅
   - Instalado; `hello_world` con backend `sim` y RViz funcionan (`cffirmware` y `rowan` resueltos).
   - **DoD:** los paquetes son detectables por ROS 2 y los ejemplos se ejecutan.
-- [ ] **TP-08 — Study Crazyflie command hierarchy** [15–17%] · P0 · ⬜
+- [x] **TP-08 — Study Crazyflie command hierarchy** [15–17%] · P0 · ✅
   - Documentar takeoff, land, `go_to` y los setpoints de posición/velocidad (`cmd_position`, `cmd_vel_legacy`, `cmd_full_state`, etc.). Confirmar que el control de bajo nivel queda onboard. Documentar los watchdogs y qué pasa si se dejan de enviar setpoints.
   - **DoD:** `docs/crazyflie_command_interface.md` aprobado.
+  - Revisión completada (7 oct): comandos, prioridades y watchdogs documentados; `scripts/verify_tp08.py` verifica callbacks y física SIL. Límites de simulación y confirmaciones pendientes de hardware explícitos en el documento. TP-09 sigue pendiente.
 - [ ] **TP-09 — Hardware abstraction interface** [17–19%] · P0 · ⬜
   - API ROS propia para `state`, `ranges`, `command`, `takeoff`, `land` y `emergency`.
   - **DoD:** ningún planner depende de nombres internos de Crazyswarm2.
