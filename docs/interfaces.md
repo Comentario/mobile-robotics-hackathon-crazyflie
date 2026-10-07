@@ -41,7 +41,7 @@ Dos ideas de diseño:
 
 | Módulo | Paquete | Qué hace | Pregunta que responde | TPs |
 |---|---|---|---|---|
-| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Puede inyectar fallos. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
+| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Inyección de fallos de escenarios disponible; campaña TP-41 pendiente. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
 | 1 | `cf_adapter` | **Dron real**: traduce entre Crazyswarm2 y la API `/hk/*`. Es el único paquete que conoce Crazyswarm2. | ¿Dónde estoy y qué veo? (hardware) | TP-08, TP-09 |
 | 2 | `state_monitor` | Publica el estado único (`map → base_link`) y la salud de la localización: `GOOD` / `DEGRADED` / `LOST`. No es un EKF nuevo. | ¿Me puedo fiar de mi posición? | TP-13 a TP-17 |
 | 3 | `range_processor` | Valida y filtra los rangos (NaN, fuera de rango, picos) y los convierte en rayos con dirección. | ¿Qué obstáculos detecto ahora? | TP-19 a TP-22 |
@@ -76,7 +76,7 @@ state_monitor/
 
 La lógica se separa del nodo (regla 6) para poder probarla con `pytest` en milisegundos, sin lanzar ROS. El nodo solo conecta esa lógica con los topics.
 
-**Estado actual:** cada `*_node.py` documenta en su cabecera qué publica, a qué se suscribe y qué parámetros tiene, pero aún no implementa nada (salvo el smoke test de TP-06: `simulation_adapter` publica una pose fija y `state_monitor` la reenvía a `/hk/state`; ver `scripts/smoke_test.sh`). Las funciones de lógica lanzan `NotImplementedError` y los tests están marcados como `skip`. Cada TP posterior rellena su parte; la columna "TPs" de la tabla anterior indica cuál.
+**Estado actual:** `cf_adapter` implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. TP-10 implementa `simulation_adapter`: POSITION/VELOCITY XY/HOVER, yaw, velocidad/aceleración limitadas, servicios de vuelo y seis rangos sintéticos contra un mundo YAML. Publica odometría, ground truth, TF y obstáculos; 79 pruebas pasan. Se conserva e integra la inyección de fallos aportada en main; la campaña completa sigue pendiente en TP-41. `mission_manager` implementa TP-26 (aporte de main, 8 pruebas de lógica); `state_monitor` reenvía la odometría a `/hk/state`; navegación y seguridad siguen mayormente como esqueletos. La numeración de referencia está en el roadmap.
 
 ## Sensores: qué llega al stack
 
@@ -93,7 +93,7 @@ Si hiciera falta el flujo óptico crudo (por ejemplo, para diagnosticar superfic
 ## Reglas
 
 1. **Solo `cf_adapter` conoce Crazyswarm2.** Ningún otro paquete usa topics o servicios `/cfXXX/...` (TP-09).
-2. **`simulation_adapter` y `cf_adapter` exponen exactamente la misma API** (`/hk/adapter/*`, `/hk/takeoff`, `/hk/land`, `/hk/emergency`). Pasar de simulación a hardware consiste en cambiar el adapter (VS-5).
+2. **`simulation_adapter` y `cf_adapter` deben exponer la misma API** (`/hk/adapter/*`, `/hk/takeoff`, `/hk/land`, `/hk/emergency`). Ambos adapters implementan esos endpoints; las limitaciones físicas y del backend se documentan abajo. Pasar de simulación a hardware consiste en cambiar el adapter (VS-5).
 3. **Solo `safety_supervisor` publica `/hk/cmd/safe`**, que es lo único que escuchan los adapters. `local_navigator` solo *propone* comandos en `/hk/cmd/nav`.
 4. Todo el stack consume **un único estado**: `/hk/state` (TP-14).
 5. Unidades SI (m, s, rad), ejes REP-103 (x adelante, y izquierda, z arriba) y rangos según REP-117 (`+inf` sin retorno, `-inf` demasiado cerca, `NaN` inválido).
@@ -167,6 +167,19 @@ flowchart LR
 | `/hk/emergency` | `std_srvs/Trigger` | adapter | safety_supervisor, operador |
 | `/hk/mission/start`, `pause`, `resume`, `abort` | `std_srvs/Trigger` | mission_manager | operador |
 
+En el simulador propio, `success=true` confirma aceptación, no llegada. El modelo
+`KinematicDrone` separa GROUND, TAKING_OFF, FLYING, LANDING y EMERGENCY. Solo FLYING
+acepta referencias de navegación; para salir de GROUND debe solicitarse takeoff.
+Despegue/aterrizaje generan una referencia vertical suave durante la duración
+solicitada y esperan posición/velocidad dentro de `position_tolerance` y
+`settle_speed`; los límites del modelo pueden prolongar la llegada. Landing tiene
+prioridad sobre navegación y puede interrumpir un despegue. Al contactar el suelo
+se fija Z=0 y velocidad cero. Emergency interrumpe cualquier maniobra y simula
+caída por `gravity`, sin control de motores ni drag, hasta contactar el suelo;
+queda enclavada hasta reiniciar el nodo. No reproduce el firmware de emergencia
+ni una dinámica 6DOF. En vuelo libre, perder comandos captura HOVER; ese watchdog
+no cancela las maniobras de servicio, que no requieren un stream de setpoints.
+
 ## Mensajes propios (`hackathon_interfaces`)
 
 | Mensaje | Contenido |
@@ -190,14 +203,93 @@ map ──(state_monitor)──> base_link ──(static, config/frames.yaml)─
                                                                   └─> down_tof
 ```
 
-Crazyswarm2 publica su propio TF (`world -> cfXXX`). No lo usamos directamente: `cf_adapter` convierte la pose a `/hk/adapter/odom` y `state_monitor` publica `map -> base_link`, igual que en simulación. Por eso `odom` no se usa por ahora (TP-13).
+Crazyswarm2 publica su propio TF (`world -> cfXXX`). En SIL, `cf_adapter` puede leerlo para publicar `/hk/adapter/odom`; en hardware puede consumir odometría o pose. El resto del stack consume `/hk/state`, y `state_monitor` publica `map -> base_link`. El frame llamado `odom` no se usa por ahora; el mensaje `nav_msgs/Odometry` sí.
 
-## Lado Crazyswarm2 (pendiente de TP-08)
+## Adapter Crazyswarm2 — TP-09
 
-Por confirmar con `ros2 topic list` / `ros2 service list` durante un vuelo, ya sea con `backend:=sim` o con hardware:
+TP-08 y las limitaciones del SIL se documentan en [crazyflie_command_interface.md](crazyflie_command_interface.md). Solo `cf_adapter` conoce los endpoints del robot; sus nombres pueden cambiar mediante parámetros sin modificar los paquetes de los colegas.
 
-- La pose, la odometría y el `scan` del Multi-ranger solo se publican si se activan en `firmware_logging` de `crazyflies.yaml`. Eso explicaría por qué no aparecieron en la prueba de `hello_world`.
-- Setpoints de streaming (`cmd_position`, `cmd_hover`, `cmd_full_state`…): frecuencia mínima y watchdog del firmware.
-- El orden de los rangos dentro del `scan` y cómo se representa "sin retorno".
+| Parámetro | Uso / valor por defecto |
+|---|---|
+| `robot_name`, `group_mask` | Robot `cf231`, grupo `0` |
+| `map_frame`, `base_frame`, `source_frame` | `map`, `base_link`, `world` |
+| `state_source` | `odom` (por defecto), `pose` o `tf` |
+| `odom_topic`, `pose_topic`, `scan_topic` | Vacío usa `/<robot>/odom`, `/<robot>/pose`, `/<robot>/scan` |
+| `odom_linear_frame`, `odom_angular_units` | Convención de entrada: `body`/`world`, `radians`/`degrees`. Por defecto, ROS estándar: `body`, `radians` |
+| `vertical_ranges_topic` | Vacío desactiva datos verticales. Si se configura, recibe `LogDataGeneric` con **exactamente** `[range.up, range.zrange]` en mm |
+| `state_timeout`, `range_timeout`, `command_timeout` | Edad máxima en segundos de estado, rangos y comandos; `0.3`, `0.3`, `0.5` |
+| `service_timeout` | `2.0` s de reloj monotónico; funciona aunque se pause `/clock` |
+| `reference_initial_dt`, `reference_max_dt` | Integración de velocidad: primer paso `0.05` s; máximo intervalo `0.1` s |
+| `land_height`, `streaming_valid_ms` | Altura final `0.0` m; argumento de notify `100` ms, cuyo efecto depende del firmware (ver TP-08) |
 
-Todo eso se resuelve dentro de [`cf_adapter/mapping.py`](../ros2_ws/src/cf_adapter/cf_adapter/mapping.py).
+**Frames y estado:** `source_frame` debe coincidir en origen y orientación con `map_frame`; el adapter no realiza una transformación de calibración entre ambos. Esta correspondencia se debe confirmar en TP-13 y en hardware. Preserva timestamps y rechaza estado vencido, de otro robot/frame o con pose inválida. Odometría estándar conserva twist en el frame del cuerpo; el servidor `cflib` instalado entrega velocidad lineal global y gyro en grados/s, por lo que `event.yaml` configura `world`/`degrees` y se transforman también las covarianzas. Confirmar esas convenciones al elegir otro backend. Fuentes de pose/TF no miden velocidad: se publica twist cero con covarianza alta, no una medición fiable de velocidad cero.
+
+**Rangos:** el servidor `cflib` instalado publica cuatro rayos `[back, right, front, left]` con ángulo inicial `-pi` y paso `pi/2`. El adapter identifica direcciones por los ángulos y conserva valores REP-117. Los rangos `up` y `down` son `NaN` si no hay logging vertical válido; no se inventan medidas. El logging vertical opcional se convierte de mm a m y se combina al recibir un scan horizontal. Si contribuye información vertical, el mensaje usa el timestamp más antiguo de ambos streams; los datos verticales vencidos se descartan. La frecuencia de salida sigue la del scan horizontal.
+
+**Comandos:** solo se acepta `/hk/cmd/safe` en `map_frame`, con timestamp reciente y estado válido. POSITION se convierte a FullState. HOVER captura posición/yaw medidos al entrar y mantiene esa referencia. VELOCITY integra XY hacia referencias absolutas y añade velocidad como feedforward; mantiene `position.z` y exige `velocity.z=0`. No es control nativo exclusivamente por velocidad. Un intervalo excesivo o retroceso del reloj reinicia/rechaza la integración; no se regeneran comandos cuando el supervisor deja de publicar. El filtrado de obstáculos, geofence y watchdog de misión corresponden a `safety_supervisor`.
+
+**Servicios:** `success=true` significa que Crazyswarm2 respondió, no que acabó la maniobra. Se espera su respuesta con timeout; fallos y servicios ausentes devuelven `success=false`. Durante el cambio a órdenes de alto nivel se bloquean setpoints. Si había streaming, notify debe responder antes de enviar la siguiente orden; su efecto físico sigue dependiendo del backend. Después de aterrizaje/emergencia o un fallo, el streaming queda bloqueado. Un nuevo despegue confirmado lo habilita cuando transcurre su duración solicitada. La emergencia invalida transiciones pendientes, pero no puede cancelar una orden ya enviada al servidor ni garantizar un efecto que el backend no implemente.
+
+**Configuración:** activar `odom` (o `pose`) y `scan` en `firmware_logging` del servidor real, y el bloque vertical opcional con el orden indicado. Sin ellos el adapter no publica datos ficticios. En SIL usar el overlay `cs2_sim.yaml`: `state_source=tf`, `use_sim_time=true`; no hay rangos reales. Estos requisitos de hardware se confirman con los mentores, no mediante pruebas sintéticas.
+
+Pruebas desde la raíz del repo, después de compilar los paquetes:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+export PYTHONPATH="$PWD/ros2_ws/src/cf_adapter:/home/asus/crazyflie-firmware/build${PYTHONPATH:+:$PYTHONPATH}"
+export ROS_DOMAIN_ID=89 ROS_LOCALHOST_ONLY=1 ROS_LOG_DIR=/tmp/tp09-ros-logs
+/usr/bin/python3 -m pytest ros2_ws/src/cf_adapter/test -q
+```
+
+Usar un dominio ROS de pruebas sin otros nodos y adaptar la ruta de bindings a cada equipo. Las pruebas ROS usan telemetría y servicios sintéticos; la prueba SIL usa callbacks del servidor **a través del transporte ROS y del adapter**, con física `np`. Sin bindings instalados, la prueba SIL se omite explícitamente. Ninguna prueba conecta Crazyradio ni valida vuelo real.
+
+
+## Simulador propio (TP-10)
+
+`simulation_adapter` sustituye a `cf_adapter`; arrancar solo uno por dominio ROS.
+POSITION sigue XYZ y yaw; VELOCITY sigue velocidad XY en `map`, mantiene
+`position.z` y rechaza `velocity.z != 0`; HOVER captura posición y yaw al entrar.
+La velocidad vectorial y su cambio están limitados por `max_speed` y `max_accel`;
+el yaw recorre el camino angular más corto con límite `max_yaw_rate`. Puede haber
+sobrepaso por inercia. Se rechazan comandos de otro frame, vencidos, futuros,
+fuera de orden, no finitos o de un modo desconocido.
+
+`world_file` carga bounds, ceiling y cajas desde YAML; sin archivo usa una sala
+vacía de 4×4×2 m. `scenario_file` aporta start=[x,y,z,yaw]. Cajas con altura,
+velocidad y ventana [t_start,t_end) usan segundos relativos al arranque. El
+modelo avanza 1/sim_rate por tick; bajo carga puede avanzar más lento que el
+reloj ROS, usado para timestamps y watchdog. No publica `/clock`.
+
+Los seis rayos consideran paredes, cajas, techo y suelo. Los offsets nominales
+son los de `config/frames.yaml`, todavía sujetos a medición en TP-13; se rotan
+con yaw. Rangos en metros, frame `base_link`, a `range_rate`: +inf fuera de
+`range_max`, -inf por debajo de `range_min`. Un sensor fuera de la sala devuelve
+-inf. Los obstáculos son geometría de percepción; no bloquean físicamente el
+movimiento ni sustituyen la seguridad del supervisor. `World.collides` permite
+consultar contacto geométrico; no se implementa dinámica de impactos.
+
+`/hk/sim/ground_truth` publica el estado sin ruido; `/hk/adapter/odom` y su TF
+`map → base_link` incluyen ruido XYZ opcional y covarianza correspondiente.
+Twist se expresa en `base_link`, con velocidad angular Z en rad/s.
+`range_noise_std` y `pose_noise_std` son desviaciones estándar; `random_seed`
+permite reproducir las muestras. Por defecto el nodo usa ruido cero;
+`simulation.yaml` configura ruido de rangos 0.01 m y pose 0.005 m.
+`/hk/sim/obstacles` publica la sala y las cajas activas como MarkerArray.
+Se conservan los eventos `faults` de main: range_spike/dropout, pose_delay/
+freeze/jump/dropout y command_pause. Se aplican con el tiempo relativo del modelo.
+Ground truth continúa durante pose_dropout; delay/freeze mantienen el timestamp
+de publicación del aporte original. Hay regresiones ROS de conexión de fallos,
+pero la campaña completa de escenarios y métricas de TP-41 sigue pendiente.
+
+Verificación desde la raíz, con un dominio sin otros nodos:
+
+```bash
+bash scripts/build.sh --packages-select simulation_adapter hackathon_bringup
+bash scripts/verify_tp10.sh
+```
+
+Resultado tras integrar main: 79 pruebas correctas, sin omisiones. Se comprueban geometría, sensores, límites, watchdog, modos, yaw,
+servicios ROS, YAML, ruido y el ciclo despegue → navegación → rangos → aterrizaje.
+Esto valida el adapter; la misión autónoma del stack se integra en TP-12 y los
+TP de navegación/seguridad.

@@ -23,17 +23,31 @@ simulation_adapter:
     sim_rate: 100.0
     state_rate: 50.0
     range_rate: 20.0
+    range_min: 0.02          # m, límites de los sensores sintéticos
+    range_max: 4.0
+    max_yaw_rate: 1.5        # rad/s, modelo cinemático
+    random_seed: 0          # ruido reproducible
     max_speed: 1.0
     max_accel: 2.0
+    response_time: 1.0       # simulador; no modifica el controlador del dron real
+    position_tolerance: 0.01 # simulador: m
+    settle_speed: 0.02       # simulador: m/s
+    gravity: 9.81            # simulador: m/s²
     range_noise_std: 0.01
     pose_noise_std: 0.005
-    command_watchdog: 0.5     # s sin setpoints -> hover (imitar firmware; verificar en TP-08)
+    command_watchdog: 0.5     # s sin setpoints -> hover; política del simulador propio
 
 cf_adapter:
   ros__parameters:
     robot_name: cf231
-    command_mode: position    # position | hover
-    down_tof_available: true
+    state_source: odom       # enable odom and scan in Crazyswarm2 firmware_logging
+    odom_linear_frame: world # installed cflib server; confirm for selected backend
+    odom_angular_units: degrees # installed cflib gyro logs; confirm for selected backend
+    source_frame: world      # confirm alignment with map_frame before hardware flight
+    service_timeout: 2.0
+    reference_initial_dt: 0.05
+    reference_max_dt: 0.1
+    vertical_ranges_topic: ''  # configure with mentors: custom log [range.up, range.zrange], mm
 
 state_monitor:
   ros__parameters:

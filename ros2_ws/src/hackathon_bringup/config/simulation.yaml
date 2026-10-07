@@ -15,27 +15,35 @@
     warning_distance: 0.6    # m
     critical_distance: 0.3  # m
     ttc_threshold: 1.5          # s
-    range_min: 0.02
-    range_max: 4.0
-    drone_radius: 0.08
-    random_seed: 42
 
 simulation_adapter:
   ros__parameters:
     sim_rate: 100.0
     state_rate: 50.0
     range_rate: 20.0
+    range_min: 0.02          # m, límites de los sensores sintéticos
+    range_max: 4.0
+    max_yaw_rate: 1.5        # rad/s, modelo cinemático
+    random_seed: 0          # ruido reproducible
     max_speed: 1.0
     max_accel: 2.0
+    response_time: 1.0       # s; reduce la velocidad deseada cerca del objetivo
+    position_tolerance: 0.01 # m; llegada de maniobras / contacto simulado con suelo
+    settle_speed: 0.02       # m/s; velocidad máxima para confirmar llegada
+    gravity: 9.81            # m/s²; solo caída de emergencia del simulador
     range_noise_std: 0.01
     pose_noise_std: 0.005
-    command_watchdog: 0.5     # s sin setpoints -> hover (imitar firmware; verificar en TP-08)
+    command_watchdog: 0.5     # s sin setpoints -> hover; política del simulador propio
 
 cf_adapter:
   ros__parameters:
     robot_name: cf231
-    command_mode: position    # position | hover
-    down_tof_available: true
+    state_source: odom       # cf_adapter only; simulation_adapter supplies its own state
+    source_frame: world      # must share origin and axes with map_frame
+    service_timeout: 2.0
+    reference_initial_dt: 0.05
+    reference_max_dt: 0.1
+    vertical_ranges_topic: ''  # optional custom log [range.up, range.zrange], mm
 
 state_monitor:
   ros__parameters:
