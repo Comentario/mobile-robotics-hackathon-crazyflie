@@ -161,7 +161,7 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
   - **DoD:** ningún planner depende de nombres internos de Crazyswarm2.
   - Implementado: pose/odom/TF → API propia, scan cardinal y logging vertical opcional, POSITION/VELOCITY XY/HOVER → FullState, servicios con respuesta/timeout y bloqueo de streaming durante transiciones. 29 pruebas pasan (lógica, transporte ROS con mocks y conexión al SIL); hardware y logging real pendientes del runbook. Contrato y configuración en `docs/interfaces.md`.
 - [x] **TP-10 — Simulation adapter** [19–22%] · P0 · ✅
-  - Implementado: POSITION/VELOCITY XY/HOVER y yaw, límites de velocidad/aceleración, servicios de vuelo, mundo YAML y seis rangos por raycast; odometría, ground truth, TF y marcadores. Verificado: 72 pruebas pasan, incluido ciclo de vuelo mediante ROS; 3 pruebas de fallos omitidas (TP-41). Repetir con `bash scripts/verify_tp10.sh`. Integración de misión/stack: TP-12; no implica validar hardware.
+  - Implementado: POSITION/VELOCITY XY/HOVER y yaw, límites de velocidad/aceleración, servicios de vuelo, mundo YAML y seis rangos por raycast; odometría, ground truth, TF y marcadores. Verificado tras integrar main: 79 pruebas pasan, incluido ciclo de vuelo mediante ROS y conexión de la inyección de fallos aportada por el colega. Campaña completa TP-41 pendiente. Repetir con `bash scripts/verify_tp10.sh`. Integración de misión/stack: TP-12; no implica validar hardware.
   - Nodo que publica pose y rangos sintéticos (raycast contra obstáculos definidos en YAML) con la misma API que el hardware, acepta setpoints e integra un movimiento simple. No hace falta Gazebo.
   - Motivo: el backend `sim` de Crazyswarm2 no publica rangos del Multi-ranger (ver "Limitación actual" en el README).
   - **DoD:** el stack corre sin dron físico.
@@ -171,7 +171,7 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [x] **TP-12 — Bringup architecture** [24–25%] · P0 · ✅
   - `simulation.launch.py`, `real.launch.py` como placeholder, parámetros separados del código.
   - **DoD:** un solo comando inicia la slice de simulación.
-  - Verificado: launch instalado con T01 y T03; 16 nodos, odometría → estado, rangos, servicios y TF, parámetros/overlays y cierre por Ctrl+C o salida de un nodo. Dos pruebas de configuración pasan. Repetir con `scripts/verify_tp12.py`; los nodos pendientes de los colegas arrancan como esqueletos, sin validar todavía la misión autónoma. `real.launch.py` conserva la arquitectura equivalente y requiere Crazyswarm2 externo; hardware sin probar.
+  - Verificado: launch instalado con T01 y T03; 16 nodos, odometría → estado, rangos, servicios y TF, parámetros/overlays y cierre por Ctrl+C o salida de un nodo. Dos pruebas de configuración pasan. Repetir con `scripts/verify_tp12.py`; TP-26 del colega está integrado; los nodos de navegación y seguridad pendientes arrancan como esqueletos, sin validar todavía la misión autónoma. `real.launch.py` conserva la arquitectura equivalente y requiere Crazyswarm2 externo; hardware sin probar.
 
 ### Bloque C — State, frames and localization health (25–39%)
 

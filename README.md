@@ -112,7 +112,7 @@ Preguntas para mentores (no bloquean el desarrollo gracias a la capa de abstracc
 Desarrollo (el detalle está en [docs/roadmap.md](docs/roadmap.md)):
 
 - [x] API propia y `cf_adapter`, verificados con mocks ROS y SIL (TP-09); validación con hardware real pendiente.
-- [x] Simulador propio con pose y seis rangos sintéticos (TP-10); 72 pruebas pasan, repetir con `bash scripts/verify_tp10.sh`.
+- [x] Simulador propio con pose y seis rangos sintéticos (TP-10); 79 pruebas pasan, repetir con `bash scripts/verify_tp10.sh`.
 - [ ] Nodo propio de misión/navegación y configuración de *waypoints* (TP-26, TP-32).
 - [ ] Primera política de evitación apropiada a los sensores reales (TP-19, TP-20, TP-34) y comportamiento seguro ante datos perdidos (TP-15, TP-37, TP-38, TP-39).
 - [ ] Probar integración con un Crazyflie real bajo supervisión y espacio de vuelo autorizado (runbook del roadmap).
@@ -206,7 +206,7 @@ Al terminar un TP, actualizar su casilla en `docs/roadmap.md` y, si cambia el es
 └── data/                   # bags y resultados locales (fuera de Git)
 ```
 
-Cada paquete Python sigue el mismo patrón: un `*_node.py` que conecta ROS y uno o más **módulos de lógica pura** (sin `rclpy`) con tests en `test/`. `cf_adapter` ya implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. `simulation_adapter` implementa TP-10 con movimiento, servicios de vuelo, mundo YAML y rangos por raycast. Los demás paquetes siguen mayormente como esqueletos con lógica pendiente y tests marcados como `skip`.
+Cada paquete Python sigue el mismo patrón: un `*_node.py` que conecta ROS y uno o más **módulos de lógica pura** (sin `rclpy`) con tests en `test/`. `cf_adapter` ya implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. `simulation_adapter` implementa TP-10 con movimiento, servicios de vuelo, mundo YAML y rangos por raycast. `mission_manager` incorpora TP-26 de main con 8 pruebas de lógica. Los demás paquetes siguen mayormente como esqueletos con lógica pendiente y tests marcados como `skip`.
 
 ### Mapa del código a escribir
 
@@ -236,8 +236,8 @@ ros2 launch hackathon_bringup simulation.launch.py scenario:=T01_single_waypoint
 
 TP-12 verificado: arranca los 16 nodos y conecta pose, estado, rangos y TF; Ctrl+C
 cierra el bringup. Para repetir: `ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py`
-(después de cargar ROS e `install/setup.bash`). Los nodos de misión, navegación
-y seguridad todavía son esqueletos; el arranque no implica una misión autónoma.
+(después de cargar ROS e `install/setup.bash`). TP-26 de misión está implementado; navegación y seguridad siguen en desarrollo.
+El arranque no implica una misión autónoma.
 
 ## Plan del equipo
 

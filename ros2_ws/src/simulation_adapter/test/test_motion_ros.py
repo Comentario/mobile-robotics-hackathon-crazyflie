@@ -288,3 +288,33 @@ def test_ros_complete_flight_with_navigation_and_sensors(rig):
     wait(lambda: simulator.drone.phase == 'GROUND')
     wait(lambda: ranges[-1].down == -math.inf and odometry[-1].pose.pose.position.z == 0)
     print('ROS PASS: despegue → POSITION → rangos contra sala → aterrizaje')
+
+
+def test_main_fault_injector_is_connected_to_commands_and_ros_ranges(rig):
+    from simulation_adapter.faults import FaultInjector
+    from hackathon_interfaces.msg import MultiRange
+    simulator, peer, executor, publisher, odometry, wait, command = rig
+    ranges = []
+    subscription = peer.create_subscription(MultiRange,'/hk/adapter/ranges',ranges.append,10)
+    simulator.fault_injector = FaultInjector([
+        dict(type='command_pause'), dict(type='range_spike',sensor='front',value=.1),
+        dict(type='range_dropout',sensor='back')])
+    publisher.publish(command())
+    wait(lambda: ranges and ranges[-1].front < .11)
+    assert math.isnan(ranges[-1].back)
+    assert simulator.target == (0,0,1) and simulator.last_command_time is None
+
+
+def test_main_pose_fault_does_not_change_ground_truth(rig):
+    from simulation_adapter.faults import FaultInjector
+    simulator, peer, executor, publisher, odometry, wait, command = rig
+    truth = []
+    subscription = peer.create_subscription(Odometry,'/hk/sim/ground_truth',truth.append,10)
+    simulator.fault_injector = FaultInjector([dict(type='pose_jump',offset=[.3,0,0])])
+    wait(lambda: truth and odometry[-1].pose.pose.position.x > .29)
+    assert truth[-1].pose.pose.position.x == 0
+    simulator.fault_injector = FaultInjector([dict(type='pose_dropout')])
+    count, truth_count = len(odometry), len(truth)
+    wait(lambda: len(truth) > truth_count+5)
+    # Una publicación que ya estaba en tránsito puede llegar al cambiar la inyección.
+    assert len(odometry) <= count+1

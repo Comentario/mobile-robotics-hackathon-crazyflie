@@ -41,7 +41,7 @@ Dos ideas de diseño:
 
 | Módulo | Paquete | Qué hace | Pregunta que responde | TPs |
 |---|---|---|---|---|
-| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Inyección de fallos prevista en TP-41. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
+| 1 | `simulation_adapter` | **Dron simulado**: publica pose y rangos sintéticos (raycast contra obstáculos en YAML) e integra los setpoints recibidos. Inyección de fallos de escenarios disponible; campaña TP-41 pendiente. | ¿Dónde estoy y qué veo? (simulación) | TP-10 |
 | 1 | `cf_adapter` | **Dron real**: traduce entre Crazyswarm2 y la API `/hk/*`. Es el único paquete que conoce Crazyswarm2. | ¿Dónde estoy y qué veo? (hardware) | TP-08, TP-09 |
 | 2 | `state_monitor` | Publica el estado único (`map → base_link`) y la salud de la localización: `GOOD` / `DEGRADED` / `LOST`. No es un EKF nuevo. | ¿Me puedo fiar de mi posición? | TP-13 a TP-17 |
 | 3 | `range_processor` | Valida y filtra los rangos (NaN, fuera de rango, picos) y los convierte en rayos con dirección. | ¿Qué obstáculos detecto ahora? | TP-19 a TP-22 |
@@ -76,7 +76,7 @@ state_monitor/
 
 La lógica se separa del nodo (regla 6) para poder probarla con `pytest` en milisegundos, sin lanzar ROS. El nodo solo conecta esa lógica con los topics.
 
-**Estado actual:** `cf_adapter` implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. TP-10 implementa `simulation_adapter`: POSITION/VELOCITY XY/HOVER, yaw, velocidad/aceleración limitadas, servicios de vuelo y seis rangos sintéticos contra un mundo YAML. Publica odometría, ground truth, TF y obstáculos; 72 pruebas pasan. La inyección avanzada de fallos sigue pendiente en TP-41. `state_monitor` reenvía la odometría a `/hk/state`; los demás paquetes siguen mayormente como esqueletos. La numeración de referencia está en el roadmap.
+**Estado actual:** `cf_adapter` implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. TP-10 implementa `simulation_adapter`: POSITION/VELOCITY XY/HOVER, yaw, velocidad/aceleración limitadas, servicios de vuelo y seis rangos sintéticos contra un mundo YAML. Publica odometría, ground truth, TF y obstáculos; 79 pruebas pasan. Se conserva e integra la inyección de fallos aportada en main; la campaña completa sigue pendiente en TP-41. `mission_manager` implementa TP-26 (aporte de main, 8 pruebas de lógica); `state_monitor` reenvía la odometría a `/hk/state`; navegación y seguridad siguen mayormente como esqueletos. La numeración de referencia está en el roadmap.
 
 ## Sensores: qué llega al stack
 
@@ -276,8 +276,11 @@ Twist se expresa en `base_link`, con velocidad angular Z en rad/s.
 permite reproducir las muestras. Por defecto el nodo usa ruido cero;
 `simulation.yaml` configura ruido de rangos 0.01 m y pose 0.005 m.
 `/hk/sim/obstacles` publica la sala y las cajas activas como MarkerArray.
-Los eventos `faults` de los escenarios se implementarán en TP-41 y todavía
-no se aplican; esto impide dar por validados los escenarios con fallos.
+Se conservan los eventos `faults` de main: range_spike/dropout, pose_delay/
+freeze/jump/dropout y command_pause. Se aplican con el tiempo relativo del modelo.
+Ground truth continúa durante pose_dropout; delay/freeze mantienen el timestamp
+de publicación del aporte original. Hay regresiones ROS de conexión de fallos,
+pero la campaña completa de escenarios y métricas de TP-41 sigue pendiente.
 
 Verificación desde la raíz, con un dominio sin otros nodos:
 
@@ -286,8 +289,7 @@ bash scripts/build.sh --packages-select simulation_adapter hackathon_bringup
 bash scripts/verify_tp10.sh
 ```
 
-Resultado de revisión: 72 pruebas correctas y 3 omitidas explícitamente de
-TP-41. Se comprueban geometría, sensores, límites, watchdog, modos, yaw,
+Resultado tras integrar main: 79 pruebas correctas, sin omisiones. Se comprueban geometría, sensores, límites, watchdog, modos, yaw,
 servicios ROS, YAML, ruido y el ciclo despegue → navegación → rangos → aterrizaje.
 Esto valida el adapter; la misión autónoma del stack se integra en TP-12 y los
 TP de navegación/seguridad.
@@ -328,4 +330,4 @@ ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py --scenario T03_static_w
 Las dos verificaciones de launch pasaron, con overlays y cierre sin nodos
 residuales; las dos pruebas de configuración también. La prueba no envía órdenes
 de vuelo y comprueba arranque y conexiones disponibles. No confirma aún una
-misión autónoma completa: misión, planificación y seguridad siguen en desarrollo.
+misión autónoma completa: TP-26 está implementado; planificación y seguridad siguen en desarrollo.
