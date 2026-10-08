@@ -4,12 +4,14 @@ Inputs:
   /hk/state                 nav_msgs/Odometry
   /hk/goal                  geometry_msgs/PoseStamped
   /hk/ranges                hackathon_interfaces/MultiRange
+  /hk/localization_health   hackathon_interfaces/LocalizationHealth
 
 Output:
   /hk/cmd/nav               hackathon_interfaces/Setpoint
 
 TP-32 provides the bounded direct-goal position follower.
 TP-34 adds reactive horizontal obstacle avoidance.
+TP-16 adapts navigation speed to localization health.
 
 Only safety_supervisor may publish /hk/cmd/safe.
 """
@@ -23,10 +25,15 @@ from nav_msgs.msg import Odometry
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
-from hackathon_interfaces.msg import MultiRange, Setpoint
+from hackathon_interfaces.msg import (
+    LocalizationHealth,
+    MultiRange,
+    Setpoint,
+)
 
 from .avoidance import AvoidanceConfig, reactive_correction
 from .follower import direct_position_setpoint, yaw_towards
+from .speed_policy import navigation_speed
 
 
 class LocalNavigator(Node):
@@ -43,6 +50,7 @@ class LocalNavigator(Node):
         self.goal = None
         self.last_goal_monotonic = None
         self.ranges = None
+        self.localization_status = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -71,6 +79,13 @@ class LocalNavigator(Node):
             10,
         )
 
+        self.create_subscription(
+            LocalizationHealth,
+            '/hk/localization_health',
+            self._localization_health_callback,
+            10,
+        )
+
         self.steady_clock = Clock(
             clock_type=ClockType.STEADY_TIME
         )
@@ -82,14 +97,16 @@ class LocalNavigator(Node):
         )
 
         self.get_logger().info(
-            'TP-32/34 local navigator ready: '
-            '/hk/state + /hk/goal + /hk/ranges -> /hk/cmd/nav'
+            'TP-16/32/34 local navigator ready: '
+            '/hk/state + /hk/goal + /hk/ranges + '
+            '/hk/localization_health -> /hk/cmd/nav'
         )
 
     def _declare_parameters(self):
         """Declare local-navigation parameters."""
         self.declare_parameter('control_rate', 20.0)
         self.declare_parameter('nominal_speed', 0.3)
+        self.declare_parameter('degraded_speed', 0.15)
         self.declare_parameter('max_speed', 0.5)
         self.declare_parameter('z_nominal', 0.5)
         self.declare_parameter('goal_timeout', 0.5)
@@ -107,6 +124,10 @@ class LocalNavigator(Node):
 
         self.nominal_speed = float(
             self.get_parameter('nominal_speed').value
+        )
+
+        self.degraded_speed = float(
+            self.get_parameter('degraded_speed').value
         )
 
         self.max_speed = float(
@@ -142,6 +163,14 @@ class LocalNavigator(Node):
 
         if self.nominal_speed <= 0.0:
             raise ValueError('nominal_speed must be positive')
+
+        if self.degraded_speed <= 0.0:
+            raise ValueError('degraded_speed must be positive')
+
+        if self.degraded_speed > self.nominal_speed:
+            raise ValueError(
+                'degraded_speed must not exceed nominal_speed'
+            )
 
         if self.max_speed <= 0.0:
             raise ValueError('max_speed must be positive')
@@ -207,6 +236,10 @@ class LocalNavigator(Node):
             'right': float(msg.right),
         }
 
+    def _localization_health_callback(self, msg):
+        """Store the latest localization-health state."""
+        self.localization_status = int(msg.status)
+
     @staticmethod
     def _map_to_body(vx_map, vy_map, yaw):
         """Rotate a horizontal vector from map to base_link."""
@@ -259,6 +292,20 @@ class LocalNavigator(Node):
         if goal_age > self.goal_timeout:
             return
 
+        active_speed = navigation_speed(
+            status=self.localization_status,
+            nominal_speed=self.nominal_speed,
+            degraded_speed=self.degraded_speed,
+        )
+
+        if active_speed is None:
+            return
+
+        speed_scale = (
+            active_speed
+            / self.nominal_speed
+        )
+
         max_step = (
             self.nominal_speed
             / self.control_rate
@@ -304,6 +351,9 @@ class LocalNavigator(Node):
                 corrected_body[1],
                 self.current_yaw,
             )
+
+        vx_map *= speed_scale
+        vy_map *= speed_scale
 
         vx_map, vy_map = self._limit_horizontal_speed(
             vx_map,
