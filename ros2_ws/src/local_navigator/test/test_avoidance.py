@@ -1,26 +1,146 @@
-"""Tests unitarios de local_navigator.avoidance (lógica pura, sin ROS).
+"""Unit tests for TP-34 horizontal reactive avoidance."""
 
-Ejecutar: colcon test --packages-select local_navigator && colcon test-result --verbose
-"""
+import math
+
 import pytest
 
-pytestmark = pytest.mark.skip(reason='TODO: implementar junto con TP-32 / TP-33 / TP-34 / TP-35 / TP-36')
+from local_navigator.avoidance import (
+    AvoidanceConfig,
+    reactive_correction,
+)
 
-def test_front_obstacle_stops_forward_motion():
-    pass
 
-def test_side_obstacle_pushes_away():
-    pass
+@pytest.fixture
+def config():
+    return AvoidanceConfig(
+        warning_distance=0.5,
+        critical_distance=0.2,
+        avoidance_speed=0.2,
+    )
 
+
+def clear_ranges():
+    return {
+        'front': math.inf,
+        'back': math.inf,
+        'left': math.inf,
+        'right': math.inf,
+    }
+
+
+def test_clear_path_preserves_velocity(config):
+    velocity, blocked, reason = reactive_correction(
+        ranges=clear_ranges(),
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert velocity == pytest.approx((0.3, 0.0, 0.0))
+    assert blocked is False
+    assert reason == ''
+
+
+def test_front_critical_obstacle_prevents_forward_motion(config):
+    ranges = clear_ranges()
+    ranges['front'] = 0.15
+
+    velocity, blocked, _ = reactive_correction(
+        ranges=ranges,
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert velocity[0] <= 0.0
+    assert blocked is False
+
+
+def test_front_warning_obstacle_slows_forward_motion(config):
+    ranges = clear_ranges()
+    ranges['front'] = 0.35
+
+    velocity, _, _ = reactive_correction(
+        ranges=ranges,
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert 0.0 < velocity[0] < 0.3
+
+
+def test_left_obstacle_pushes_right(config):
+    ranges = clear_ranges()
+    ranges['left'] = 0.15
+
+    velocity, _, _ = reactive_correction(
+        ranges=ranges,
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert velocity[1] < 0.0
+
+
+def test_right_obstacle_pushes_left(config):
+    ranges = clear_ranges()
+    ranges['right'] = 0.15
+
+    velocity, _, _ = reactive_correction(
+        ranges=ranges,
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert velocity[1] > 0.0
+
+
+def test_invalid_range_is_ignored(config):
+    ranges = clear_ranges()
+    ranges['front'] = math.nan
+
+    velocity, blocked, _ = reactive_correction(
+        ranges=ranges,
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert velocity == pytest.approx((0.3, 0.0, 0.0))
+    assert blocked is False
+
+
+def test_boxed_forward_direction_reports_blocked(config):
+    ranges = clear_ranges()
+    ranges['front'] = 0.15
+    ranges['left'] = 0.15
+    ranges['right'] = 0.15
+
+    velocity, blocked, reason = reactive_correction(
+        ranges=ranges,
+        closing_rates=None,
+        velocity_body=(0.3, 0.0, 0.0),
+        config=config,
+    )
+
+    assert blocked is True
+    assert reason == 'horizontal_blocked'
+    assert velocity[:2] == pytest.approx((0.0, 0.0))
+
+
+@pytest.mark.skip(reason='TP-36: closing-rate and TTC logic')
 def test_low_ttc_requests_hover():
     pass
 
-def test_blocked_requests_replan():
-    pass
 
+@pytest.mark.skip(reason='TP-35: vertical avoidance')
 def test_ceiling_blocks_ascent():
     pass
 
+
+@pytest.mark.skip(reason='TP-35: vertical avoidance')
 def test_floor_blocks_descent():
     pass
-

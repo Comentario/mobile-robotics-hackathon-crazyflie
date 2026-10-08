@@ -46,6 +46,7 @@ class SimulationAdapter(Node):
 
     def __init__(self):
         super().__init__('simulation_adapter')
+        self.publish_tf = self.declare_parameter('publish_tf', True).value
         self.map_frame = self.declare_parameter('map_frame', 'map').value
         self.base_frame = self.declare_parameter('base_frame', 'base_link').value
         state_rate = self.declare_parameter('state_rate', 50.0).value
@@ -245,7 +246,8 @@ class SimulationAdapter(Node):
         transform.transform.translation.y = msg.pose.pose.position.y
         transform.transform.translation.z = msg.pose.pose.position.z
         transform.transform.rotation = msg.pose.pose.orientation
-        self.tf_broadcaster.sendTransform(transform)
+        if self.publish_tf:
+            self.tf_broadcaster.sendTransform(transform)
 
     def _publish_ranges(self):
         msg = MultiRange()

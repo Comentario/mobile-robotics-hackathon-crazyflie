@@ -21,12 +21,11 @@ Services:
   /hk/mission/abort          std_srvs/Trigger
 """
 
-import time
 
+import math
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
-from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
@@ -58,6 +57,7 @@ class MissionManager(Node):
 
         self.machine = None
 
+        self.input_stamps = {}
         self.position = None
         self.health = None
         self.safety_state = None
@@ -141,21 +141,13 @@ class MissionManager(Node):
             self._abort_callback,
         )
 
-        self.steady_clock = Clock(
-            clock_type=ClockType.STEADY_TIME
-        )
-
-        self.create_timer(
-            1.0 / self.mission_rate,
-            self._tick,
-            clock=self.steady_clock,
-        )
+        self.create_timer(1.0 / self.mission_rate, self._tick)
 
         if self.mission_file:
             self._load_machine()
 
         if self.autostart and self.machine is not None:
-            self.machine.start(time.monotonic())
+            self.machine.start(self._now())
 
         self.get_logger().info(
             'Mission Manager ready: '
@@ -173,6 +165,7 @@ class MissionManager(Node):
         self.declare_parameter('autostart', False)
         self.declare_parameter('mission_rate', 10.0)
         self.declare_parameter('map_frame', 'map')
+        self.input_timeout = self.declare_parameter('state_timeout', 0.3).value
 
     def _read_parameters(self):
         """Read Mission Manager parameters."""
@@ -218,7 +211,7 @@ class MissionManager(Node):
     def _load_machine(self):
         """Load the configured YAML mission and create its state machine."""
         try:
-            waypoints = load_mission(self.mission_file)
+            waypoints = load_mission(self.mission_file, self.map_frame)
 
             self.machine = MissionStateMachine(
                 waypoints=waypoints,
@@ -243,6 +236,12 @@ class MissionManager(Node):
 
     def _state_callback(self, msg):
         """Store the latest normalized vehicle position."""
+        if msg.header.frame_id != self.map_frame or not self._fresh(msg):
+            return
+        p = msg.pose.pose.position
+        if not all(math.isfinite(v) for v in (p.x,p.y,p.z)):
+            return
+        self.input_stamps['state'] = self._now()
         self.position = (
             float(msg.pose.pose.position.x),
             float(msg.pose.pose.position.y),
@@ -251,15 +250,28 @@ class MissionManager(Node):
 
     def _health_callback(self, msg):
         """Store the latest localization health state."""
+        if msg.header.frame_id != self.map_frame or not self._fresh(msg):
+            return
+        self.input_stamps['health'] = self._now()
         self.health = int(msg.status)
 
     def _safety_callback(self, msg):
         """Store the latest Safety Supervisor state."""
+        if not self._fresh(msg):
+            return
+        self.input_stamps['safety'] = self._now()
         self.safety_state = int(msg.state)
 
     def _planner_callback(self, msg):
         """Store the latest planner state."""
         self.planner_status = int(msg.status)
+
+    def _fresh(self, msg):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec/1e9
+        return 0 <= self._now()-stamp <= self.input_timeout
+
+    def _now(self):
+        return self.get_clock().now().nanoseconds / 1e9
 
     def _tick(self):
         """Advance the mission state machine and execute its actions."""
@@ -285,13 +297,16 @@ class MissionManager(Node):
             return
 
         action = self.machine.step(
-            now=time.monotonic(),
+            now=self._now(),
             position=self.position,
-            health=self.health,
-            safety_state=self.safety_state,
+            health=self.health if self._now()-self.input_stamps.get('health',-math.inf) <= self.input_timeout else LocalizationHealth.LOST,
+            safety_state=self.safety_state if self._now()-self.input_stamps.get('safety',-math.inf) <= self.input_timeout else SafetyState.HOVER,
             planner_status=self.planner_status,
         )
 
+        if self.machine.state == ABORTED and self.machine.reason == 'waypoint_timeout':
+            self._force_land = True
+            self._request_land()
         if action[0] == 'goal':
             self._publish_goal(action[1])
 
@@ -456,7 +471,7 @@ class MissionManager(Node):
             return response
 
         success, message = self.machine.start(
-            time.monotonic()
+            self._now()
         )
 
         self._takeoff_sent = False
@@ -494,7 +509,7 @@ class MissionManager(Node):
             return response
 
         success, message = self.machine.resume(
-            now=time.monotonic()
+            now=self._now()
         )
 
         response.success = success

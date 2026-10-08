@@ -1,34 +1,34 @@
-"""ROS 2 wrapper for the TP-32 direct position follower.
+"""Local navigation node for TP-32 and TP-34.
 
-MVP input:
+Inputs:
   /hk/state                 nav_msgs/Odometry
   /hk/goal                  geometry_msgs/PoseStamped
+  /hk/ranges                hackathon_interfaces/MultiRange
 
 Output:
   /hk/cmd/nav               hackathon_interfaces/Setpoint
 
-The direct-goal input is temporary for the MVP. Later planning TPs can replace
-it with /hk/path/processed without changing the command interface.
+TP-32 provides the bounded direct-goal position follower.
+TP-34 adds reactive horizontal obstacle avoidance.
 
 Only safety_supervisor may publish /hk/cmd/safe.
 """
 
 import math
-import time
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
-from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
-from hackathon_interfaces.msg import Setpoint
+from hackathon_interfaces.msg import MultiRange, Setpoint, MissionStatus
 
-from .follower import direct_position_setpoint, yaw_towards
+from .avoidance import AvoidanceConfig, reactive_correction
+from .follower import direct_position_setpoint
 
 
 class LocalNavigator(Node):
-    """Generate bounded position setpoints toward the active waypoint."""
+    """Generate bounded navigation proposals with horizontal avoidance."""
 
     def __init__(self):
         super().__init__('local_navigator')
@@ -39,7 +39,8 @@ class LocalNavigator(Node):
         self.position = None
         self.current_yaw = 0.0
         self.goal = None
-        self.last_goal_monotonic = None
+        self.goal_stamp = None
+        self.ranges = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -61,46 +62,81 @@ class LocalNavigator(Node):
             10,
         )
 
-        self.steady_clock = Clock(
-            clock_type=ClockType.STEADY_TIME
+        self.create_subscription(
+            MultiRange,
+            '/hk/ranges',
+            self._ranges_callback,
+            10,
         )
 
-        self.create_timer(
-            1.0 / self.control_rate,
-            self._control_tick,
-            clock=self.steady_clock,
-        )
+        self.state_stamp = None
+        self.range_stamp = None
+        self.mission_active = False
+        self.create_subscription(MissionStatus, '/hk/mission_status', self._mission_callback, 10)
+        self.create_timer(1.0 / self.control_rate, self._control_tick)
 
         self.get_logger().info(
-            'TP-32 direct position follower ready: '
-            '/hk/state + /hk/goal -> /hk/cmd/nav'
+            'TP-32/34 local navigator ready: '
+            '/hk/state + /hk/goal + /hk/ranges -> /hk/cmd/nav'
         )
 
     def _declare_parameters(self):
-        """Declare follower parameters."""
+        """Declare local-navigation parameters."""
         self.declare_parameter('control_rate', 20.0)
         self.declare_parameter('nominal_speed', 0.3)
+        self.declare_parameter('max_speed', 0.5)
         self.declare_parameter('z_nominal', 0.5)
         self.declare_parameter('goal_timeout', 0.5)
+        self.state_timeout = self.declare_parameter('state_timeout', 0.3).value
+        self.range_timeout = self.declare_parameter('range_timeout', 0.3).value
+        self.base_frame = self.declare_parameter('base_frame', 'base_link').value
+        self.slowdown_radius = self.declare_parameter('goal_slowdown_radius', 0.5).value
         self.declare_parameter('map_frame', 'map')
 
+        self.declare_parameter('warning_distance', 0.5)
+        self.declare_parameter('critical_distance', 0.2)
+        self.declare_parameter('avoidance_speed', 0.2)
+
     def _read_parameters(self):
-        """Read and validate follower parameters."""
+        """Read and validate local-navigation parameters."""
         self.control_rate = float(
             self.get_parameter('control_rate').value
         )
+
         self.nominal_speed = float(
             self.get_parameter('nominal_speed').value
         )
+
+        self.max_speed = float(
+            self.get_parameter('max_speed').value
+        )
+
         self.z_nominal = float(
             self.get_parameter('z_nominal').value
         )
+
         self.goal_timeout = float(
             self.get_parameter('goal_timeout').value
         )
+
         self.map_frame = str(
             self.get_parameter('map_frame').value
         )
+
+        self.avoidance_config = AvoidanceConfig(
+            warning_distance=float(
+                self.get_parameter('warning_distance').value
+            ),
+            critical_distance=float(
+                self.get_parameter('critical_distance').value
+            ),
+            avoidance_speed=float(
+                self.get_parameter('avoidance_speed').value
+            ),
+        )
+
+        if not all(math.isfinite(v) and v > 0 for v in (self.control_rate, self.nominal_speed, self.max_speed, self.goal_timeout, self.state_timeout, self.range_timeout, self.slowdown_radius)):
+            raise ValueError('Rates, speeds, timeouts and slowdown radius must be finite and positive')
 
         if self.control_rate <= 0.0:
             raise ValueError('control_rate must be positive')
@@ -108,11 +144,29 @@ class LocalNavigator(Node):
         if self.nominal_speed <= 0.0:
             raise ValueError('nominal_speed must be positive')
 
+        if self.max_speed <= 0.0:
+            raise ValueError('max_speed must be positive')
+
         if self.goal_timeout <= 0.0:
             raise ValueError('goal_timeout must be positive')
 
+    def _now(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def _mission_callback(self, msg):
+        self.mission_active = msg.state == MissionStatus.NAVIGATE
+
+    def _stamp(self, msg):
+        return msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
     def _state_callback(self, msg):
         """Store the latest normalized vehicle state."""
+        if msg.header.frame_id != self.map_frame or not 0 <= self._now()-self._stamp(msg) <= self.state_timeout:
+            return
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        if not all(math.isfinite(v) for v in (p.x,p.y,p.z,q.x,q.y,q.z,q.w)):
+            return
+        self.state_stamp = self._stamp(msg)
         self.position = (
             float(msg.pose.pose.position.x),
             float(msg.pose.pose.position.y),
@@ -134,7 +188,7 @@ class LocalNavigator(Node):
 
     def _goal_callback(self, msg):
         """Store the latest direct waypoint."""
-        if msg.header.frame_id not in ('', self.map_frame):
+        if msg.header.frame_id != self.map_frame or not 0 <= self._now()-self._stamp(msg) <= self.goal_timeout:
             self.get_logger().warn(
                 f'Ignoring goal in frame "{msg.header.frame_id}"; '
                 f'expected "{self.map_frame}"'
@@ -153,23 +207,77 @@ class LocalNavigator(Node):
             )
             return
 
-        self.goal = tuple(float(value) for value in values)
-        self.last_goal_monotonic = time.monotonic()
+        self.goal = tuple(
+            float(value)
+            for value in values
+        )
+
+        self.goal_stamp = self._stamp(msg)
+
+    def _ranges_callback(self, msg):
+        """Store the latest horizontal range measurements."""
+        if msg.header.frame_id != self.base_frame or not 0 <= self._now()-self._stamp(msg) <= self.range_timeout:
+            return
+        self.range_stamp = self._stamp(msg)
+        self.ranges = {
+            'front': float(msg.front),
+            'back': float(msg.back),
+            'left': float(msg.left),
+            'right': float(msg.right),
+        }
+
+    @staticmethod
+    def _map_to_body(vx_map, vy_map, yaw):
+        """Rotate a horizontal vector from map to base_link."""
+        cosine = math.cos(yaw)
+        sine = math.sin(yaw)
+
+        return (
+            cosine * vx_map + sine * vy_map,
+            -sine * vx_map + cosine * vy_map,
+        )
+
+    @staticmethod
+    def _body_to_map(vx_body, vy_body, yaw):
+        """Rotate a horizontal vector from base_link to map."""
+        cosine = math.cos(yaw)
+        sine = math.sin(yaw)
+
+        return (
+            cosine * vx_body - sine * vy_body,
+            sine * vx_body + cosine * vy_body,
+        )
+
+    def _limit_horizontal_speed(self, vx, vy):
+        """Limit horizontal speed magnitude."""
+        speed = math.hypot(vx, vy)
+
+        if speed <= self.max_speed or speed == 0.0:
+            return vx, vy
+
+        scale = self.max_speed / speed
+
+        return (
+            vx * scale,
+            vy * scale,
+        )
 
     def _control_tick(self):
-        """Publish one bounded navigation proposal."""
+        """Publish one local-navigation proposal."""
+        if not self.mission_active or self.state_stamp is None or not 0 <= self._now()-self.state_stamp <= self.state_timeout:
+            return
         if self.position is None or self.goal is None:
             return
 
-        if self.last_goal_monotonic is None:
+        if self.goal_stamp is None:
             return
 
         goal_age = (
-            time.monotonic()
-            - self.last_goal_monotonic
+            self._now()
+            - self.goal_stamp
         )
 
-        if goal_age > self.goal_timeout:
+        if not 0 <= goal_age <= self.goal_timeout:
             return
 
         max_step = (
@@ -177,32 +285,83 @@ class LocalNavigator(Node):
             / self.control_rate
         )
 
-        target = direct_position_setpoint(
+        follower_target = direct_position_setpoint(
             position=self.position,
             goal=self.goal,
             max_step=max_step,
             z_nominal=self.z_nominal,
         )
 
-        yaw = yaw_towards(
-            position=self.position,
-            target=self.goal,
-            current_yaw=self.current_yaw,
+        vx_map = (
+            follower_target[0]
+            - self.position[0]
+        ) * self.control_rate
+
+        vy_map = (
+            follower_target[1]
+            - self.position[1]
+        ) * self.control_rate
+
+        distance = math.hypot(self.goal[0]-self.position[0], self.goal[1]-self.position[1])
+        scale = min(1.0, distance / self.slowdown_radius)
+        vx_map, vy_map = vx_map*scale, vy_map*scale
+        if self.ranges is not None and self.range_stamp is not None and 0 <= self._now()-self.range_stamp <= self.range_timeout:
+            vx_body, vy_body = self._map_to_body(
+                vx_map,
+                vy_map,
+                self.current_yaw,
+            )
+
+            corrected_body, _, _ = reactive_correction(
+                ranges=self.ranges,
+                closing_rates=None,
+                velocity_body=(
+                    vx_body,
+                    vy_body,
+                    0.0,
+                ),
+                config=self.avoidance_config,
+            )
+
+            vx_map, vy_map = self._body_to_map(
+                corrected_body[0],
+                corrected_body[1],
+                self.current_yaw,
+            )
+
+        vx_map, vy_map = self._limit_horizontal_speed(
+            vx_map,
+            vy_map,
         )
+
+        target_x = (
+            self.position[0]
+            + vx_map / self.control_rate
+        )
+
+        target_y = (
+            self.position[1]
+            + vy_map / self.control_rate
+        )
+
+        # Mantener rumbo: un giro cambia los rayos ToF y puede aparentar una
+        # velocidad de cierre que no procede de la traslación (TTC). El MVP
+        # no exige orientar el morro hacia cada waypoint.
+        yaw = self.current_yaw
 
         msg = Setpoint()
 
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.map_frame
 
-        msg.mode = Setpoint.MODE_POSITION
+        msg.mode = Setpoint.MODE_VELOCITY
 
-        msg.position.x = target[0]
-        msg.position.y = target[1]
-        msg.position.z = target[2]
+        msg.position.x = float(target_x)
+        msg.position.y = float(target_y)
+        msg.position.z = float(self.goal[2])
 
-        msg.velocity.x = 0.0
-        msg.velocity.y = 0.0
+        msg.velocity.x = float(vx_map)
+        msg.velocity.y = float(vy_map)
         msg.velocity.z = 0.0
 
         msg.yaw = float(yaw)
