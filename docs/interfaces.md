@@ -331,3 +331,38 @@ Las dos verificaciones de launch pasaron, con overlays y cierre sin nodos
 residuales; las dos pruebas de configuración también. La prueba no envía órdenes
 de vuelo y comprueba arranque y conexiones disponibles. No confirma aún una
 misión autónoma completa: TP-26 está implementado; planificación y seguridad siguen en desarrollo.
+
+
+## Configuración del evento (TP-42 C/E)
+
+`config/event.yaml` contiene parámetros del stack con `autostart=false` y
+`robot_name=ROBOT_ID_TODO`. `config/event_hardware.yaml` usa el formato de
+Crazyswarm2 y contiene el robot deshabilitado y URI/tipo pendientes. La URI no
+es un parámetro de `cf_adapter`. Mantener robot_name y clave robots iguales,
+frames alineados y waypoints dentro de los límites. Las tasas de logging,
+variables verticales y tipo se confirman con el equipo entregado.
+
+```bash
+/usr/bin/python3 scripts/verify_event_config.py         # plantilla coherente + pendientes
+/usr/bin/python3 scripts/verify_event_config.py --ready # código 1 mientras haya placeholders
+```
+
+El verificador comprueba archivos y consistencia (alturas, geofence, mapa,
+velocidades, tiempos, logging y misión); no mide sensores ni valida que los
+nodos todavía pendientes apliquen sus parámetros. Acepta `--params`, `--hardware`
+y `--mission` para validar copias ajustadas. Procedimiento y responsabilidades:
+[hackathon_day_runbook.md](hackathon_day_runbook.md).
+
+Para comprobar el bringup instalado con el perfil de evento, sin radio:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py --params event.yaml
+```
+
+Verificado el 8 de octubre: 15 pruebas de configuración, compilación y launch
+con 16 nodos, API/TF y cierre sin nodos residuales. Usa el simulador y un overlay
+de prueba, sin órdenes de vuelo. TP-42 D queda
+pendiente; el runbook usa el servidor de Crazyswarm2 y `real.launch.py` en
+terminales separadas. Los parámetros actuales son de desarrollo, no del evento.

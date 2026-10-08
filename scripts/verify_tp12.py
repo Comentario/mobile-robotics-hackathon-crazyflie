@@ -34,6 +34,8 @@ EXPECTED = {'simulation_adapter', 'state_monitor', 'range_processor', 'local_wor
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', default='T01_single_waypoint')
+    parser.add_argument('--params', default='simulation.yaml',
+                        help='Perfil de parámetros a validar, por ejemplo event.yaml')
     parser.add_argument('--stop-node', action='store_true',
                         help='Termina el simulador para comprobar cierre del stack ante salida de un nodo')
     args = parser.parse_args()
@@ -83,7 +85,7 @@ def main():
                        peer.create_client(Trigger,'/hk/emergency')]
             with log_path.open('w') as log:
                 process = subprocess.Popen(['ros2','launch','hackathon_bringup','simulation.launch.py',
-                    f'scenario:={args.scenario}',f'overlay:={overlay}'],
+                    f'scenario:={args.scenario}',f'params:={args.params}',f'overlay:={overlay}'],
                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 try:
                     wait(lambda: EXPECTED.issubset(peer.get_node_names()) and
