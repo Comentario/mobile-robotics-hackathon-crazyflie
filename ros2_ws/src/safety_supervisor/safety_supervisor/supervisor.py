@@ -12,10 +12,23 @@ Qué decide evaluate() en cada ciclo (de más grave a menos grave)
           vencidos) dura más de hover_timeout Y el dron está en el aire.
           Solo con lost_policy = 'hover_then_land'.
   HOVER   Localización LOST, estado vencido, comandos vencidos, rangos vencidos
-          (si ranges_required), obstáculo a menos de critical_distance, dron fuera
-          de la geofence, o el planner sin ruta.
+          (si ranges_required), obstáculo demasiado cerca (ver "Distancia de
+          frenado"), dron fuera de la geofence, o el planner sin ruta.
   SLOW    Localización DEGRADED, o TTC menor que ttc_threshold.
   NORMAL  Nada de lo anterior.
+
+Distancia de frenado
+--------------------
+  Un dron que va hacia una pared a velocidad v no se para en seco: primero tarda
+  reaction_time en reaccionar (filtro de rangos, ciclo del supervisor, radio) y
+  luego frena con deceleración max_decel. Recorre
+      d_frenado = v * reaction_time + v^2 / (2 * max_decel)
+  Por eso el nodo no compara el rango directamente con critical_distance, sino la
+  "holgura" = rango - d_frenado (effective_clearance), con v = velocidad con la
+  que ESE sensor ve acercarse el obstáculo (-d_dot). Moverse en paralelo a una
+  pared no cuenta como acercarse.
+  Prueba T03 en simulación: a 1 m/s, con critical_distance 0.3 m sin este término,
+  el dron tocaba la pared.
 
 Histéresis
 ----------
@@ -28,9 +41,9 @@ Qué hace filter_command() con el comando del navegador
   NORMAL  Lo deja pasar (recortado a la geofence y a z_min/z_max).
   SLOW    Lo deja pasar, pero más despacio:
             VELOCITY: velocidad x speed_scale.
-            POSITION: objetivo acercado al dron (actual + speed_scale x distancia);
-                      como la velocidad del controlador es proporcional a la
-                      distancia al objetivo, el dron va más despacio.
+            POSITION: objetivo acercado al dron, como mucho slow_max_step m
+                      (y como mucho speed_scale x distancia). Con un objetivo
+                      lejano, solo escalar la distancia no frenaba nada.
   HOVER   Lo sustituye por "quédate quieto aquí".
   LAND / ABORT  Lo descarta (None): el aterrizaje o la emergencia ya se pidieron
                 por servicio.
@@ -73,6 +86,9 @@ class SupervisorConfig:
     ttc_threshold: float = 1.5          # s: TTC menor -> SLOW
     ranges_required: bool = True        # sin rangos -> HOVER
     slow_speed_scale: float = 0.5       # factor de velocidad en SLOW
+    slow_max_step: float = 0.15         # m: en SLOW, objetivo POSITION a como mucho esto
+    reaction_time: float = 0.3          # s: retraso total hasta empezar a frenar
+    max_decel: float = 2.0              # m/s^2: deceleración (= max_accel del simulador)
 
 
 class SafetySupervisor:
@@ -188,10 +204,11 @@ class SafetySupervisor:
             if out['mode'] == MODE_VELOCITY:
                 out['velocity'] = tuple(v * speed_scale for v in out['velocity'])
             elif current_position is not None:
-                out['position'] = tuple(
-                    c + speed_scale * (t - c)
-                    for c, t in zip(current_position, out['position'])
-                )
+                delta = [t - c for c, t in zip(current_position, out['position'])]
+                dist = math.sqrt(sum(d * d for d in delta))
+                step = min(speed_scale * dist, self.config.slow_max_step)
+                k = step / dist if dist > 0.0 else 0.0
+                out['position'] = tuple(c + k * d for c, d in zip(current_position, delta))
 
         # Geofence (TP-39) y banda de altura (TP-17): el objetivo nunca sale de la caja.
         if geofence is not None:
@@ -213,7 +230,34 @@ class SafetySupervisor:
         return out
 
 
+def stopping_distance(speed, config):
+    """Metros que recorre el dron hasta pararse si va a 'speed' m/s."""
+    v = max(0.0, speed)
+    return v * config.reaction_time + v * v / (2.0 * config.max_decel)
+
+
+def effective_clearance(distance, closing_rate, config):
+    """Rango menos la distancia de frenado hacia ese obstáculo (REP-117).
+
+    closing_rate: d_dot del sensor (m/s, negativo = se acerca) o None/NaN.
+    Devuelve inf si la lectura no sirve (+inf o NaN) y 0 si es -inf (pegado).
+    """
+    if distance == -math.inf:
+        return 0.0
+    if not math.isfinite(distance):
+        return math.inf
+    approach = 0.0
+    if closing_rate is not None and math.isfinite(closing_rate) and closing_rate < 0.0:
+        approach = -closing_rate
+    return max(0.0, distance - stopping_distance(approach, config))
+
+
 def min_finite(values):
-    """Menor valor finito y positivo de una lista, o inf si no hay ninguno."""
-    finite = [v for v in values if math.isfinite(v) and v > 0.0]
+    """Distancia mínima de una lista de rangos REP-117, o inf si no hay ninguna.
+
+    -inf (demasiado cerca) cuenta como 0 m: es el caso MÁS peligroso, no se ignora.
+    +inf (sin retorno) y NaN (inválido) se ignoran.
+    """
+    usable = [0.0 if v == -math.inf else v for v in values]
+    finite = [v for v in usable if math.isfinite(v) and v >= 0.0]
     return min(finite) if finite else math.inf

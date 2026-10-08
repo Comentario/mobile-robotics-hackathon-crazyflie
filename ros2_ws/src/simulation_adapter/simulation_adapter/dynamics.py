@@ -13,9 +13,22 @@ Modos internos del dron (atributo ``KinematicDrone.mode``)
   'takeoff'    Subiendo hasta la altura pedida (rampa lineal durante ``duration``).
   'land'       Bajando hasta el suelo (rampa lineal durante ``duration``).
   'command'    Siguiendo el último setpoint recibido (POSITION / VELOCITY / HOVER).
-  'hover'      Quieto en un punto fijo. Se entra al terminar el despegue o cuando
-               salta el watchdog (no llegan setpoints durante command_watchdog).
+  'hover'      Quieto en un punto fijo. Se entra al terminar el despegue (como el
+               high-level commander del firmware, que sigue generando setpoints).
+               Sin firmware_watchdog: también cuando salta el watchdog.
+  'level_out'  Solo con firmware_watchdog: sin setpoints durante command_watchdog
+               (0.5 s). Roll/pitch a 0: mantiene la altura pero sigue deslizando
+               con la velocidad horizontal que llevaba.
   'emergency'  Motores fuera: cae hasta z = 0 y ya no acepta ningún comando.
+
+Watchdog del firmware real (firmware_watchdog=True)
+---------------------------------------------------
+  Copiado de crazyflie-firmware 2025.02, src/modules/src/supervisor.c:
+    COMMANDER_WDT_TIMEOUT_STABILIZE = 500 ms  -> estado WarningLevelOut
+    COMMANDER_WDT_TIMEOUT_SHUTDOWN  = 2000 ms -> estado ExceptFreeFall (motores fuera)
+  Solo afecta al streaming de setpoints de bajo nivel (modo 'command'). El
+  high-level commander (takeoff/land/hover tras despegar) genera sus propios
+  setpoints y no dispara el watchdog.
 
 Qué hace cada paso de simulación (step)
 ---------------------------------------
@@ -94,15 +107,21 @@ def _wrap_angle(angle):
 
 class KinematicDrone:
 
-    def __init__(self, max_speed, max_accel, command_watchdog):
-        """command_watchdog: s sin setpoints tras los que el dron hace hover.
+    def __init__(self, max_speed, max_accel, command_watchdog,
+                 firmware_watchdog=False, shutdown_timeout=2.0):
+        """command_watchdog: s sin setpoints de bajo nivel antes de reaccionar.
 
-        Imita el watchdog del firmware; verificar el comportamiento real en TP-08.
+        firmware_watchdog=False: reacción "amable" (hover), la del simulador antiguo.
+        firmware_watchdog=True:  como el firmware real: level_out tras
+        command_watchdog y caída (emergency) tras shutdown_timeout.
         """
         self.state = DroneState()
         self.max_speed = max_speed
         self.max_accel = max_accel
         self.command_watchdog = command_watchdog
+        self.firmware_watchdog = firmware_watchdog
+        self.shutdown_timeout = shutdown_timeout
+        self.emergency_reason = ''
 
         self.mode = 'idle'
         self._t = 0.0                       # último instante visto en step()
@@ -143,6 +162,10 @@ class KinematicDrone:
             and self._command.mode == 'hover'
         )
 
+        if self.mode in ('takeoff', 'land'):
+            # Un setpoint de bajo nivel corta la maniobra de alto nivel (el
+            # firmware da prioridad al streaming de bajo nivel).
+            self._ramp = None
         self._command = setpoint
         self._command_time = t
         self.mode = 'command'
@@ -184,8 +207,22 @@ class KinematicDrone:
         self.mode = 'land'
         return True, f'Aterrizando en {duration:.1f} s'
 
-    def emergency_stop(self):
+    def high_level_hover(self):
+        """El high-level commander toma el control: hover donde está.
+
+        Lo usa el nodo al recibir notify_setpoints_stop (el firmware deja de dar
+        prioridad al streaming de bajo nivel).
+        """
+        if self.mode in ('command', 'level_out'):
+            s = self.state
+            self._enter_hover((s.x, s.y, s.z))
+            self._command = None
+            return True
+        return False
+
+    def emergency_stop(self, reason='emergency'):
         """Motores fuera: el dron cae (z -> 0) y deja de aceptar comandos."""
+        self.emergency_reason = reason
         self.mode = 'emergency'
         self.state.flying = False
         self._command = None
@@ -209,10 +246,19 @@ class KinematicDrone:
             s.vx = s.vy = s.vz = 0.0
             return s
 
-        # 1. Watchdog: sin setpoints recientes -> hover donde esté.
-        if (self.mode == 'command'
-                and t - self._command_time > self.command_watchdog):
-            self._enter_hover((s.x, s.y, s.z))
+        # 1. Watchdog: sin setpoints de bajo nivel recientes.
+        if self.mode in ('command', 'level_out'):
+            age = t - self._command_time
+            if not self.firmware_watchdog:
+                if age > self.command_watchdog:
+                    self._enter_hover((s.x, s.y, s.z))
+            elif age > self.shutdown_timeout:
+                self.emergency_stop('watchdog')        # ExceptFreeFall
+                self._fall(dt)
+                return s
+            elif age > self.command_watchdog and self.mode == 'command':
+                self.mode = 'level_out'                # WarningLevelOut
+                self._hover_point = (s.x, s.y, s.z)
 
         # 2-4. Velocidad deseada, limitada en velocidad y aceleración.
         desired = _clamp_norm(self._desired_velocity(t), self.max_speed)
@@ -252,6 +298,10 @@ class KinematicDrone:
 
         if self.mode == 'hover':
             return self._towards(self._hover_point)
+
+        if self.mode == 'level_out':
+            # Roll/pitch = 0: sin aceleración horizontal (sigue deslizando).
+            return (s.vx, s.vy, (self._hover_point[2] - s.z) / TIME_CONSTANT)
 
         # mode == 'command'
         cmd = self._command

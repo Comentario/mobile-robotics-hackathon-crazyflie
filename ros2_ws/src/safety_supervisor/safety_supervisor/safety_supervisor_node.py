@@ -32,10 +32,22 @@ Cómo funciona el nodo
      el watchdog del adapter/firmware mantiene el hover, y este nodo pasa a HOVER
      (y a LAND tras hover_timeout si el dron está en el aire).
 
-Pendiente
----------
-  TTC (TP-36): /hk/ranges/closing_rate se escucha, pero min_ttc es siempre inf
-  hasta acordar el convenio de signo con range_processor.
+Streaming de HOVER (necesario con el dron real)
+-----------------------------------------------
+  El firmware real apaga los motores si deja de recibir setpoints de bajo nivel
+  (crazyflie-firmware 2025.02, supervisor.c: 0.5 s -> nivela y deriva; 2 s ->
+  motores fuera). Por eso, con el dron en el aire y tras haber recibido alguna
+  orden del navegador, este nodo publica él mismo un Setpoint HOVER a SAFETY_RATE Hz:
+    - siempre que el estado sea HOVER (reacción inmediata, sin esperar al
+      siguiente mensaje del navegador), y
+    - en NORMAL/SLOW si el navegador lleva más de KEEPALIVE_AGE s callado
+      (antes de los 0.5 s del firmware).
+
+TTC (TP-36)
+-----------
+  min_ttc = menor TTC de los 4 sensores horizontales, con la distancia de /hk/ranges
+  y el d_dot de /hk/ranges/closing_rate (negativo = se acerca; NaN = no disponible).
+  Si min_ttc < ttc_threshold -> SLOW.
 """
 import math
 
@@ -51,12 +63,26 @@ from hackathon_interfaces.srv import Land
 
 from .geofence import Geofence
 from .supervisor import (
-    AIRBORNE_Z, LAND, ABORT, STATE_NAMES, SafetyInputs, SafetySupervisor, SupervisorConfig,
-    min_finite,
+    AIRBORNE_Z, HOVER, LAND, ABORT, STATE_NAMES, SafetyInputs, SafetySupervisor, SupervisorConfig,
+    effective_clearance,
 )
 from .watchdog import StreamWatchdog
 
+
+def time_to_collision(distance, closing_rate):
+    """Igual que range_processor/range_filter.py (copiado para no crear una
+    dependencia entre paquetes). TTC = distance / -d_dot si se acerca; inf si no."""
+    if closing_rate is None or not math.isfinite(closing_rate) or closing_rate >= 0.0:
+        return math.inf
+    if math.isnan(distance) or distance == math.inf:
+        return math.inf
+    if distance <= 0.0:
+        return 0.0
+    return distance / -closing_rate
+
+
 SAFETY_RATE = 20.0       # Hz a los que se evalúa y publica el estado de seguridad
+KEEPALIVE_AGE = 0.25     # s sin /hk/cmd/nav antes de mandar HOVER (firmware: 0.5 s)
 GEOFENCE_MARGIN = 0.1    # m de tolerancia antes de considerar al dron FUERA de la geofence
 LAND_DURATION = 2.0      # s del aterrizaje pedido por seguridad
 
@@ -93,6 +119,9 @@ class SafetySupervisorNode(Node):
         self.position = None                    # (x, y, z) del dron
         self.localization = LocalizationHealth.LOST
         self.min_range = math.inf
+        self.horizontal = {}                    # sensor -> distancia filtrada
+        self.rates = {}                         # sensor -> d_dot (m/s) o None
+        self.min_ttc = math.inf
         self.planner_no_path = False
         self._no_path_value = getattr(PlannerStatus, 'NO_PATH', None)
         self._last_state = None
@@ -106,6 +135,8 @@ class SafetySupervisorNode(Node):
         self.create_subscription(Setpoint, '/hk/cmd/nav', self._on_nav, 10)
         self.create_subscription(Odometry, '/hk/state', self._on_state, 10)
         self.create_subscription(MultiRange, '/hk/ranges', self._on_ranges, 10)
+        self.create_subscription(
+            MultiRange, '/hk/ranges/closing_rate', self._on_closing_rate, 10)
         self.create_subscription(
             LocalizationHealth, '/hk/localization_health', self._on_health, 10)
         self.create_subscription(
@@ -136,8 +167,22 @@ class SafetySupervisorNode(Node):
         self.state_wd.stamp(self._now())
 
     def _on_ranges(self, msg):
-        self.min_range = min_finite([msg.front, msg.back, msg.left, msg.right])
+        self.horizontal = {name: getattr(msg, name)
+                           for name in ('front', 'back', 'left', 'right')}
+        # Holgura = rango - distancia de frenado hacia ese obstáculo (supervisor.py).
+        self.min_range = min(
+            [effective_clearance(d, self.rates.get(name), self.supervisor.config)
+             for name, d in self.horizontal.items()] or [math.inf]
+        )
         self.range_wd.stamp(self._now())
+
+    def _on_closing_rate(self, msg):
+        ttcs = []
+        for name, distance in self.horizontal.items():
+            d_dot = getattr(msg, name)
+            self.rates[name] = None if math.isnan(d_dot) else d_dot
+            ttcs.append(time_to_collision(distance, self.rates[name]))
+        self.min_ttc = min(ttcs) if ttcs else math.inf
 
     def _on_health(self, msg):
         self.localization = msg.status
@@ -193,7 +238,7 @@ class SafetySupervisorNode(Node):
             # orden del navegador el dron está esperando, no ha perdido nada.
             command_stale=self.cmd_wd.received_any() and self.cmd_wd.stale(now),
             min_horizontal_range=self.min_range if not self.range_wd.stale(now) else math.inf,
-            min_ttc=math.inf,
+            min_ttc=self.min_ttc if not self.range_wd.stale(now) else math.inf,
             z=z,
             planner_no_path=self.planner_no_path,
             outside_geofence=(self.position is not None
@@ -202,6 +247,13 @@ class SafetySupervisorNode(Node):
         )
         state, speed_scale, reason = self.supervisor.evaluate(inputs)
         self._speed_scale = speed_scale
+
+        # Mantener vivo el streaming de setpoints (ver docstring).
+        if (z > AIRBORNE_Z and self.position is not None and self.cmd_wd.received_any()
+                and state not in (LAND, ABORT)):
+            nav_silent = now - self.cmd_wd.last_stamp > KEEPALIVE_AGE
+            if state == HOVER or nav_silent:
+                self._publish_hover()
 
         msg = SafetyState()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -220,6 +272,14 @@ class SafetySupervisorNode(Node):
             elif state == ABORT:
                 self._call_emergency()
             self._last_state = state
+
+    def _publish_hover(self):
+        safe = Setpoint()
+        safe.header.stamp = self.get_clock().now().to_msg()
+        safe.header.frame_id = 'map'
+        safe.mode = Setpoint.MODE_HOVER
+        safe.position.x, safe.position.y, safe.position.z = self.position
+        self.cmd_pub.publish(safe)
 
     def _call_land(self):
         if not self.land_client.service_is_ready():

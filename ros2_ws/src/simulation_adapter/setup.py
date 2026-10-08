@@ -20,6 +20,8 @@ setup(
     entry_points={
         'console_scripts': [
             'sim_node = simulation_adapter.sim_node:main',
+            # Dron simulado con la API de crazyflie_server (Crazyswarm2).
+            'sim_crazyflie = simulation_adapter.sim_crazyflie_node:main',
         ],
     },
 )

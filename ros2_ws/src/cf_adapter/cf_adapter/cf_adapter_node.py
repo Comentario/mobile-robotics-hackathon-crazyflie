@@ -7,8 +7,16 @@ Estado (TP-09)
 --------------
   Hecho:      equipo -> dron: /hk/cmd/safe, /hk/takeoff, /hk/land, /hk/emergency.
   Hecho:      dron -> equipo: pose en /hk/adapter/odom (ver "Fuente de la pose").
-  Pendiente:  dron -> equipo: rangos en /hk/adapter/ranges (orden del scan sin
-              confirmar con hardware; ver interfaces.md, "Lado Crazyswarm2").
+  Hecho:      dron -> equipo: rangos en /hk/adapter/ranges desde /<robot>/scan
+              (front, back, left, right) y /<robot>/ranges_extra (up, down).
+              Formato copiado de Crazyswarm2 1.0.7: ver ranges.py.
+
+Mismo nodo en simulación y en Dresden
+-------------------------------------
+  Simulación: debajo está sim_crazyflie (simulation_adapter), que imita la API de
+              crazyflie_server.
+  Dresden:    debajo está crazyflie_server (Crazyswarm2) + Crazyradio + dron.
+  En ambos casos este nodo usa los mismos tópicos y servicios /<robot>/*.
 
 Fuente de la pose (parámetro pose_source)
 -----------------------------------------
@@ -34,17 +42,19 @@ Semántica de Setpoint (hackathon_interfaces/msg/Setpoint.msg)
 """
 
 from functools import partial
+import math
 
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
 
 from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty, Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from crazyflie_interfaces.msg import FullState
+from crazyflie_interfaces.msg import FullState, LogDataGeneric
 from crazyflie_interfaces.srv import (
     Land as CfLand,
     NotifySetpointsStop,
@@ -57,6 +67,7 @@ from hackathon_interfaces.srv import (
     Takeoff as HkTakeoff,
 )
 
+from .ranges import extra_to_ranges, scan_to_ranges
 from .mapping import (
     seconds_to_duration_parts,
     topic,
@@ -87,6 +98,12 @@ class CrazyflieAdapter(Node):
         self.declare_parameter('world_frame', 'world')    # frame padre del TF (modo 'tf')
         self.declare_parameter('pose_rate', 50.0)         # Hz (modo 'tf')
         self.declare_parameter('restamp_pose', False)
+        # Rangos del dron -> /hk/adapter/ranges (ver ranges.py)
+        self.declare_parameter('scan_topic', 'scan')                  # /<robot>/scan
+        self.declare_parameter('ranges_extra_topic', 'ranges_extra')  # /<robot>/ranges_extra
+        self.declare_parameter('range_min', 0.01)    # m, igual que el LaserScan de Crazyswarm2
+        self.declare_parameter('range_max', 3.49)    # m, igual que el LaserScan de Crazyswarm2
+        self.declare_parameter('extra_timeout', 0.5)  # s sin up/down -> NaN
 
         self.robot_name = (
             self.get_parameter('robot_name')
@@ -123,6 +140,13 @@ class CrazyflieAdapter(Node):
         self._hover_point = None
         self._last_tf_stamp = None
 
+        # Últimos up/down recibidos y su hora (s, reloj del nodo).
+        self.range_min = self.get_parameter('range_min').value
+        self.range_max = self.get_parameter('range_max').value
+        self.extra_timeout = self.get_parameter('extra_timeout').value
+        self._extra = {'up': math.nan, 'down': math.nan}
+        self._extra_time = None
+
         # Project-facing publishers.
         self.odom_pub = self.create_publisher(
             Odometry,
@@ -130,8 +154,7 @@ class CrazyflieAdapter(Node):
             10,
         )
 
-        # TODO(TP-09 / Dresden): rellenar desde /<robot>/scan cuando se confirme
-        # el orden de los rangos en el hardware real.
+        # Se publica un mensaje por cada /<robot>/scan recibido.
         self.ranges_pub = self.create_publisher(
             MultiRange,
             '/hk/adapter/ranges',
@@ -207,9 +230,16 @@ class CrazyflieAdapter(Node):
         else:
             raise ValueError(f"pose_source debe ser 'topic' o 'tf', no '{self.pose_source}'")
 
+        # Crazyswarm2 rangos -> /hk/adapter/ranges.
+        scan_topic = topic(self.robot_name, self.get_parameter('scan_topic').value)
+        extra_topic = topic(self.robot_name, self.get_parameter('ranges_extra_topic').value)
+        self.create_subscription(LaserScan, scan_topic, self._scan_callback, 10)
+        self.create_subscription(LogDataGeneric, extra_topic, self._extra_callback, 10)
+
         self.get_logger().info(
             f'cf_adapter ready for robot "{self.robot_name}"'
         )
+        self.get_logger().info(f'Rangos desde {scan_topic} y {extra_topic}')
 
         self.get_logger().info(
             'Project API: /hk/cmd/safe, /hk/takeoff, /hk/land, '
@@ -260,6 +290,34 @@ class CrazyflieAdapter(Node):
         self.odom_pub.publish(odom)
 
         self._last_position = (position.x, position.y, position.z)
+
+    # ------------------------------------------------------------------
+    # Dron -> equipo: rangos
+    # ------------------------------------------------------------------
+    def _extra_callback(self, msg):
+        """/<robot>/ranges_extra: [range.up, range.zrange] en mm."""
+        self._extra = extra_to_ranges(list(msg.values), self.range_min, self.range_max)
+        self._extra_time = self.get_clock().now().nanoseconds * 1e-9
+
+    def _scan_callback(self, msg):
+        """/<robot>/scan + últimos up/down -> MultiRange en /hk/adapter/ranges."""
+        horizontal = scan_to_ranges(
+            list(msg.ranges), msg.angle_min, msg.angle_increment,
+            self.range_min, self.range_max,
+        )
+        now = self.get_clock().now().nanoseconds * 1e-9
+        extra_ok = (self._extra_time is not None
+                    and now - self._extra_time <= self.extra_timeout)
+        vertical = self._extra if extra_ok else {'up': math.nan, 'down': math.nan}
+
+        out = MultiRange()
+        out.header.stamp = msg.header.stamp
+        out.header.frame_id = self.base_frame
+        for name, value in {**horizontal, **vertical}.items():
+            setattr(out, name, float(value))
+        out.range_min = float(self.range_min)
+        out.range_max = float(self.range_max)
+        self.ranges_pub.publish(out)
 
     # ------------------------------------------------------------------
     # Equipo -> dron: setpoints
