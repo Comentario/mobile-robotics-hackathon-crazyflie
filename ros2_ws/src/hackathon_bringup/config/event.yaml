@@ -1,7 +1,8 @@
-# Configuración del evento (TP-42 parte C). TODOS los valores son placeholders:
-# definirlos con los mentores y el espacio real el día del evento.
-# Pendiente: radio URI / robot_name, frame global, límites XYZ (geofence), altura nominal,
-# umbrales de rango, velocidades, tamaño/resolución del mapa y tolerancia de waypoint.
+# TP-42 C: plantilla del stack. Valores iniciales de desarrollo, NO calibrados.
+# Confirmar con los mentores: frames/origen, límites, sensores, velocidades y waypoints.
+# Identidad/URI de radio: event_hardware.yaml (lo consume Crazyswarm2, no cf_adapter).
+# robot_name debe coincidir con su clave robots. Ejecutar scripts/verify_event_config.py.
+# Procedimiento de preparación y parada: docs/hackathon_day_runbook.md.
 
 # Sección /** = parámetros compartidos por todos los nodos (una sola fuente de verdad).
 # Cada otra sección = nombre del nodo (= nombre del paquete).
@@ -39,7 +40,7 @@ simulation_adapter:
 
 cf_adapter:
   ros__parameters:
-    robot_name: cf231
+    robot_name: ROBOT_ID_TODO # sustituir también en event_hardware.yaml
     state_source: odom       # enable odom and scan in Crazyswarm2 firmware_logging
     odom_linear_frame: world # installed cflib server; confirm for selected backend
     odom_angular_units: degrees # installed cflib gyro logs; confirm for selected backend
@@ -77,7 +78,7 @@ mission_manager:
     waypoint_timeout: 30.0
     takeoff_duration: 2.0
     land_duration: 2.0
-    autostart: false
+    autostart: false          # misión solo mediante /hk/mission/start
 
 global_planner:
   ros__parameters:
@@ -115,4 +116,4 @@ safety_supervisor:
 
 telemetry:
   ros__parameters:
-    output_dir: ~/hk_runs
+    output_dir: /tmp/hk_runs # ruta absoluta; copiar resultados a almacenamiento persistente

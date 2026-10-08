@@ -280,9 +280,10 @@ Formato: `- [ ] **TP-XX — Nombre** [rango] · prioridad · estado`, con sus ac
 - [ ] **TP-42 — Native Ubuntu, release and runbook** [94–100%] · ⬜
   - [ ] **A — Ubuntu nativo** (P1): instalar 22.04 + Humble en al menos un equipo, clonar limpio, ejecutar el script de dependencias, compilar desde cero.
   - [ ] **B — Crazyradio** (P1): reglas udev/permisos USB; verificar que se ve el Crazyradio. WSL queda como entorno secundario. **Plan B:** preguntar a los mentores si se usará un NUC o Jetson de la organización.
-  - [ ] **C — Configuración de evento** (P0): `config/event.yaml` con placeholders para radio URI / robot id, frame global, límites XYZ, altura nominal, umbrales de rango, velocidades, tamaño/resolución del mapa y tolerancia de waypoint.
+  - [x] **C — Configuración de evento** (P0): `config/event.yaml` con placeholders para radio URI / robot id, frame global, límites XYZ, altura nominal, umbrales de rango, velocidades, tamaño/resolución del mapa y tolerancia de waypoint.
   - [ ] **D — Bringup con un comando** (P1): `ros2 launch hackathon_bringup event.launch.py`.
-  - [ ] **E — Runbook del evento** (P0): `docs/hackathon_day_runbook.md` (ver [Runbook](#runbook-del-día-del-evento)).
+  - [x] **E — Runbook del evento** (P0): `docs/hackathon_day_runbook.md` (ver [Runbook](#runbook-del-día-del-evento)).
+  - Preparación C/E (8 oct): parámetros coherentes en `event.yaml`, identidad/radio deshabilitada en `event_hardware.yaml`, misión manual, runbook y `scripts/verify_event_config.py` (`--ready` rechaza placeholders). 15 pruebas de configuración pasan; compilación y launch de simulación con `event.yaml` verificados (16 nodos, API/TF y cierre). Los valores definitivos, firmware, decks, calibración y vuelo se confirman en el evento; A/B/D y la integración end-to-end siguen pendientes.
 
 ---
 
