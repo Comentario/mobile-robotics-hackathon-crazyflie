@@ -1,14 +1,15 @@
-"""ROS 2 wrapper for the TP-32 direct position follower.
+"""Local navigation node for TP-32 and TP-34.
 
-MVP input:
+Inputs:
   /hk/state                 nav_msgs/Odometry
   /hk/goal                  geometry_msgs/PoseStamped
+  /hk/ranges                hackathon_interfaces/MultiRange
 
 Output:
   /hk/cmd/nav               hackathon_interfaces/Setpoint
 
-The direct-goal input is temporary for the MVP. Later planning TPs can replace
-it with /hk/path/processed without changing the command interface.
+TP-32 provides the bounded direct-goal position follower.
+TP-34 adds reactive horizontal obstacle avoidance.
 
 Only safety_supervisor may publish /hk/cmd/safe.
 """
@@ -22,13 +23,14 @@ from nav_msgs.msg import Odometry
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
-from hackathon_interfaces.msg import Setpoint
+from hackathon_interfaces.msg import MultiRange, Setpoint
 
+from .avoidance import AvoidanceConfig, reactive_correction
 from .follower import direct_position_setpoint, yaw_towards
 
 
 class LocalNavigator(Node):
-    """Generate bounded position setpoints toward the active waypoint."""
+    """Generate bounded navigation proposals with horizontal avoidance."""
 
     def __init__(self):
         super().__init__('local_navigator')
@@ -40,6 +42,7 @@ class LocalNavigator(Node):
         self.current_yaw = 0.0
         self.goal = None
         self.last_goal_monotonic = None
+        self.ranges = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -61,6 +64,13 @@ class LocalNavigator(Node):
             10,
         )
 
+        self.create_subscription(
+            MultiRange,
+            '/hk/ranges',
+            self._ranges_callback,
+            10,
+        )
+
         self.steady_clock = Clock(
             clock_type=ClockType.STEADY_TIME
         )
@@ -72,34 +82,59 @@ class LocalNavigator(Node):
         )
 
         self.get_logger().info(
-            'TP-32 direct position follower ready: '
-            '/hk/state + /hk/goal -> /hk/cmd/nav'
+            'TP-32/34 local navigator ready: '
+            '/hk/state + /hk/goal + /hk/ranges -> /hk/cmd/nav'
         )
 
     def _declare_parameters(self):
-        """Declare follower parameters."""
+        """Declare local-navigation parameters."""
         self.declare_parameter('control_rate', 20.0)
         self.declare_parameter('nominal_speed', 0.3)
+        self.declare_parameter('max_speed', 0.5)
         self.declare_parameter('z_nominal', 0.5)
         self.declare_parameter('goal_timeout', 0.5)
         self.declare_parameter('map_frame', 'map')
 
+        self.declare_parameter('warning_distance', 0.5)
+        self.declare_parameter('critical_distance', 0.2)
+        self.declare_parameter('avoidance_speed', 0.2)
+
     def _read_parameters(self):
-        """Read and validate follower parameters."""
+        """Read and validate local-navigation parameters."""
         self.control_rate = float(
             self.get_parameter('control_rate').value
         )
+
         self.nominal_speed = float(
             self.get_parameter('nominal_speed').value
         )
+
+        self.max_speed = float(
+            self.get_parameter('max_speed').value
+        )
+
         self.z_nominal = float(
             self.get_parameter('z_nominal').value
         )
+
         self.goal_timeout = float(
             self.get_parameter('goal_timeout').value
         )
+
         self.map_frame = str(
             self.get_parameter('map_frame').value
+        )
+
+        self.avoidance_config = AvoidanceConfig(
+            warning_distance=float(
+                self.get_parameter('warning_distance').value
+            ),
+            critical_distance=float(
+                self.get_parameter('critical_distance').value
+            ),
+            avoidance_speed=float(
+                self.get_parameter('avoidance_speed').value
+            ),
         )
 
         if self.control_rate <= 0.0:
@@ -107,6 +142,9 @@ class LocalNavigator(Node):
 
         if self.nominal_speed <= 0.0:
             raise ValueError('nominal_speed must be positive')
+
+        if self.max_speed <= 0.0:
+            raise ValueError('max_speed must be positive')
 
         if self.goal_timeout <= 0.0:
             raise ValueError('goal_timeout must be positive')
@@ -153,11 +191,60 @@ class LocalNavigator(Node):
             )
             return
 
-        self.goal = tuple(float(value) for value in values)
+        self.goal = tuple(
+            float(value)
+            for value in values
+        )
+
         self.last_goal_monotonic = time.monotonic()
 
+    def _ranges_callback(self, msg):
+        """Store the latest horizontal range measurements."""
+        self.ranges = {
+            'front': float(msg.front),
+            'back': float(msg.back),
+            'left': float(msg.left),
+            'right': float(msg.right),
+        }
+
+    @staticmethod
+    def _map_to_body(vx_map, vy_map, yaw):
+        """Rotate a horizontal vector from map to base_link."""
+        cosine = math.cos(yaw)
+        sine = math.sin(yaw)
+
+        return (
+            cosine * vx_map + sine * vy_map,
+            -sine * vx_map + cosine * vy_map,
+        )
+
+    @staticmethod
+    def _body_to_map(vx_body, vy_body, yaw):
+        """Rotate a horizontal vector from base_link to map."""
+        cosine = math.cos(yaw)
+        sine = math.sin(yaw)
+
+        return (
+            cosine * vx_body - sine * vy_body,
+            sine * vx_body + cosine * vy_body,
+        )
+
+    def _limit_horizontal_speed(self, vx, vy):
+        """Limit horizontal speed magnitude."""
+        speed = math.hypot(vx, vy)
+
+        if speed <= self.max_speed or speed == 0.0:
+            return vx, vy
+
+        scale = self.max_speed / speed
+
+        return (
+            vx * scale,
+            vy * scale,
+        )
+
     def _control_tick(self):
-        """Publish one bounded navigation proposal."""
+        """Publish one local-navigation proposal."""
         if self.position is None or self.goal is None:
             return
 
@@ -177,11 +264,60 @@ class LocalNavigator(Node):
             / self.control_rate
         )
 
-        target = direct_position_setpoint(
+        follower_target = direct_position_setpoint(
             position=self.position,
             goal=self.goal,
             max_step=max_step,
             z_nominal=self.z_nominal,
+        )
+
+        vx_map = (
+            follower_target[0]
+            - self.position[0]
+        ) * self.control_rate
+
+        vy_map = (
+            follower_target[1]
+            - self.position[1]
+        ) * self.control_rate
+
+        if self.ranges is not None:
+            vx_body, vy_body = self._map_to_body(
+                vx_map,
+                vy_map,
+                self.current_yaw,
+            )
+
+            corrected_body, _, _ = reactive_correction(
+                ranges=self.ranges,
+                closing_rates=None,
+                velocity_body=(
+                    vx_body,
+                    vy_body,
+                    0.0,
+                ),
+                config=self.avoidance_config,
+            )
+
+            vx_map, vy_map = self._body_to_map(
+                corrected_body[0],
+                corrected_body[1],
+                self.current_yaw,
+            )
+
+        vx_map, vy_map = self._limit_horizontal_speed(
+            vx_map,
+            vy_map,
+        )
+
+        target_x = (
+            self.position[0]
+            + vx_map / self.control_rate
+        )
+
+        target_y = (
+            self.position[1]
+            + vy_map / self.control_rate
         )
 
         yaw = yaw_towards(
@@ -197,9 +333,9 @@ class LocalNavigator(Node):
 
         msg.mode = Setpoint.MODE_POSITION
 
-        msg.position.x = target[0]
-        msg.position.y = target[1]
-        msg.position.z = target[2]
+        msg.position.x = float(target_x)
+        msg.position.y = float(target_y)
+        msg.position.z = float(follower_target[2])
 
         msg.velocity.x = 0.0
         msg.velocity.y = 0.0
