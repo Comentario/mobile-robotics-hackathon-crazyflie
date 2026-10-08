@@ -1,4 +1,4 @@
-"""ROS 2 global planner wrapper for TP-27.
+"""ROS 2 global planner wrapper for TP-27 and TP-28.
 
 Modes:
   direct: straight path from current position to goal, without a map.
@@ -30,7 +30,7 @@ from hackathon_interfaces.msg import PlannerStatus
 
 from .astar import (
     astar,
-    binary_cost_map,
+    build_cost_map,
     cell_to_world,
     direct_path,
     world_to_cell,
@@ -114,6 +114,9 @@ class GlobalPlanner(Node):
         self.declare_parameter('planning_timeout', 0.2)
         self.declare_parameter('direct_spacing', 0.3)
         self.declare_parameter('occupied_threshold', 50)
+        self.declare_parameter('unknown_policy', 'penalize')
+        self.declare_parameter('unknown_cost', 5.0)
+        self.declare_parameter('proximity_weight', 2.0)
         self.declare_parameter('map_frame', 'map')
 
     def _read_parameters(self):
@@ -140,6 +143,18 @@ class GlobalPlanner(Node):
 
         self.occupied_threshold = int(
             self.get_parameter('occupied_threshold').value
+        )
+
+        self.unknown_policy = str(
+            self.get_parameter('unknown_policy').value
+        )
+
+        self.unknown_cost = float(
+            self.get_parameter('unknown_cost').value
+        )
+
+        self.proximity_weight = float(
+            self.get_parameter('proximity_weight').value
         )
 
         self.map_frame = str(
@@ -170,6 +185,32 @@ class GlobalPlanner(Node):
         if not 0 <= self.occupied_threshold <= 100:
             raise ValueError(
                 'occupied_threshold must be in [0, 100]'
+            )
+
+        if self.unknown_policy not in (
+            'block',
+            'penalize',
+            'free',
+        ):
+            raise ValueError(
+                'unknown_policy must be '
+                '"block", "penalize", or "free"'
+            )
+
+        if (
+            not math.isfinite(self.unknown_cost)
+            or self.unknown_cost < 0.0
+        ):
+            raise ValueError(
+                'unknown_cost must be non-negative and finite'
+            )
+
+        if (
+            not math.isfinite(self.proximity_weight)
+            or self.proximity_weight < 0.0
+        ):
+            raise ValueError(
+                'proximity_weight must be non-negative and finite'
             )
 
     def _state_callback(self, msg):
@@ -335,11 +376,20 @@ class GlobalPlanner(Node):
             )
             return
 
+        raw_grid = [
+            [
+                int(msg.data[y * info.width + x])
+                for x in range(info.width)
+            ]
+            for y in range(info.height)
+        ]
+
         try:
-            cost_map = binary_cost_map(
-                data=msg.data,
-                width=info.width,
-                height=info.height,
+            cost_map = build_cost_map(
+                grid=raw_grid,
+                unknown_policy=self.unknown_policy,
+                unknown_cost=self.unknown_cost,
+                proximity_weight=self.proximity_weight,
                 occupied_threshold=self.occupied_threshold,
             )
         except ValueError as exc:

@@ -10,13 +10,164 @@ def build_cost_map(
     unknown_policy,
     unknown_cost,
     proximity_weight,
+    occupied_threshold=50,
 ):
-    """Build the traversal cost map.
+    """Build a traversal-cost map from occupancy values.
 
-    Reserved for TP-28, where occupancy costs, unknown-space policy,
-    and obstacle-proximity penalties are introduced.
+    Occupancy values follow nav_msgs/OccupancyGrid conventions:
+      -1       -> unknown
+      0..100   -> known occupancy probability/value
+
+    Unknown-space policies:
+      block    -> unknown cells are not traversable
+      free     -> unknown cells use the normal traversal cost
+      penalize -> unknown cells remain traversable with extra cost
+
+    Traversable cells have a base cost of 1.0. A configurable inverse
+    distance penalty encourages paths to keep clearance from blocked cells.
     """
-    raise NotImplementedError
+    if unknown_policy not in ('block', 'penalize', 'free'):
+        raise ValueError(
+            'unknown_policy must be "block", "penalize", or "free"'
+        )
+
+    unknown_cost = float(unknown_cost)
+    proximity_weight = float(proximity_weight)
+    occupied_threshold = int(occupied_threshold)
+
+    if not math.isfinite(unknown_cost) or unknown_cost < 0.0:
+        raise ValueError(
+            'unknown_cost must be non-negative and finite'
+        )
+
+    if (
+        not math.isfinite(proximity_weight)
+        or proximity_weight < 0.0
+    ):
+        raise ValueError(
+            'proximity_weight must be non-negative and finite'
+        )
+
+    if not 0 <= occupied_threshold <= 100:
+        raise ValueError(
+            'occupied_threshold must be in [0, 100]'
+        )
+
+    if not grid or not grid[0]:
+        raise ValueError('grid must not be empty')
+
+    width = len(grid[0])
+    height = len(grid)
+
+    for row in grid:
+        if len(row) != width:
+            raise ValueError('grid must be rectangular')
+
+    cost_map = [
+        [1.0] * width
+        for _ in range(height)
+    ]
+
+    blocked_cells = []
+
+    for y, row in enumerate(grid):
+        for x, raw_value in enumerate(row):
+            value = int(raw_value)
+
+            if value < -1 or value > 100:
+                raise ValueError(
+                    'occupancy values must be in [-1, 100]'
+                )
+
+            if value == -1:
+                if unknown_policy == 'block':
+                    cost_map[y][x] = math.inf
+                    blocked_cells.append((x, y))
+                elif unknown_policy == 'penalize':
+                    cost_map[y][x] = 1.0 + unknown_cost
+                else:
+                    cost_map[y][x] = 1.0
+
+                continue
+
+            if value >= occupied_threshold:
+                cost_map[y][x] = math.inf
+                blocked_cells.append((x, y))
+            else:
+                cost_map[y][x] = 1.0
+
+    if proximity_weight == 0.0 or not blocked_cells:
+        return cost_map
+
+    distance_map = [
+        [math.inf] * width
+        for _ in range(height)
+    ]
+
+    queue = []
+
+    for x, y in blocked_cells:
+        distance_map[y][x] = 0.0
+        heapq.heappush(
+            queue,
+            (0.0, x, y),
+        )
+
+    neighbor_steps = (
+        (1, 0, 1.0),
+        (-1, 0, 1.0),
+        (0, 1, 1.0),
+        (0, -1, 1.0),
+        (1, 1, math.sqrt(2.0)),
+        (1, -1, math.sqrt(2.0)),
+        (-1, 1, math.sqrt(2.0)),
+        (-1, -1, math.sqrt(2.0)),
+    )
+
+    while queue:
+        distance, x, y = heapq.heappop(queue)
+
+        if distance > distance_map[y][x]:
+            continue
+
+        for dx, dy, step in neighbor_steps:
+            nx = x + dx
+            ny = y + dy
+
+            if not (
+                0 <= nx < width
+                and 0 <= ny < height
+            ):
+                continue
+
+            candidate = distance + step
+
+            if candidate >= distance_map[ny][nx]:
+                continue
+
+            distance_map[ny][nx] = candidate
+
+            heapq.heappush(
+                queue,
+                (candidate, nx, ny),
+            )
+
+    for y in range(height):
+        for x in range(width):
+            if not math.isfinite(cost_map[y][x]):
+                continue
+
+            distance = distance_map[y][x]
+
+            if not math.isfinite(distance) or distance <= 0.0:
+                continue
+
+            cost_map[y][x] += (
+                proximity_weight
+                / distance
+            )
+
+    return cost_map
 
 
 def _validate_cost_map(cost_map):
