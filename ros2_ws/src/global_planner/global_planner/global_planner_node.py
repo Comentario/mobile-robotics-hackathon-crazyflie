@@ -23,6 +23,7 @@ import time
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from std_msgs.msg import String
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
@@ -36,6 +37,8 @@ from .astar import (
     world_to_cell,
 )
 
+from .replan import ReplanPolicy
+
 
 class GlobalPlanner(Node):
     """Generate a direct or A* path toward the current mission goal."""
@@ -46,11 +49,20 @@ class GlobalPlanner(Node):
         self._declare_parameters()
         self._read_parameters()
 
+        self.replan_policy = ReplanPolicy(
+            replan_period=self.replan_period,
+            max_path_deviation=self.max_path_deviation,
+        )
+
         self.position = None
         self.goal = None
         self.map_msg = None
 
         self.plan_requested = False
+        self.pending_plan_reason = None
+        self.navigator_request = False
+        self.current_path = []
+        self.has_completed_plan = False
         self.replan_count = 0
 
         self.path_pub = self.create_publisher(
@@ -86,6 +98,13 @@ class GlobalPlanner(Node):
             10,
         )
 
+        self.create_subscription(
+            String,
+            '/hk/replan_request',
+            self._replan_request_callback,
+            10,
+        )
+
         self.steady_clock = Clock(
             clock_type=ClockType.STEADY_TIME
         )
@@ -110,6 +129,8 @@ class GlobalPlanner(Node):
         """Declare planner parameters."""
         self.declare_parameter('planner_mode', 'direct')
         self.declare_parameter('planner_rate', 2.0)
+        self.declare_parameter('replan_period', 2.0)
+        self.declare_parameter('max_path_deviation', 0.4)
         self.declare_parameter('connectivity', 8)
         self.declare_parameter('planning_timeout', 0.2)
         self.declare_parameter('direct_spacing', 0.3)
@@ -127,6 +148,14 @@ class GlobalPlanner(Node):
 
         self.planner_rate = float(
             self.get_parameter('planner_rate').value
+        )
+
+        self.replan_period = float(
+            self.get_parameter('replan_period').value
+        )
+
+        self.max_path_deviation = float(
+            self.get_parameter('max_path_deviation').value
         )
 
         self.connectivity = int(
@@ -168,6 +197,16 @@ class GlobalPlanner(Node):
 
         if self.planner_rate <= 0.0:
             raise ValueError('planner_rate must be positive')
+
+        if self.replan_period <= 0.0:
+            raise ValueError(
+                'replan_period must be positive'
+            )
+
+        if self.max_path_deviation < 0.0:
+            raise ValueError(
+                'max_path_deviation must be non-negative'
+            )
 
         if self.connectivity not in (4, 8):
             raise ValueError('connectivity must be 4 or 8')
@@ -256,34 +295,121 @@ class GlobalPlanner(Node):
         )
 
         if new_goal != self.goal:
+            had_goal = self.goal is not None
             self.goal = new_goal
-            self.plan_requested = True
+
+            self._request_plan(
+                'goal_changed'
+                if had_goal
+                else 'initial_goal'
+            )
 
     def _map_callback(self, msg):
         """Store the latest occupancy grid."""
         self.map_msg = msg
 
-        # A map arriving can satisfy a previously blocked initial plan.
+    def _replan_request_callback(self, msg):
+        """Store a replanning request from the local navigator."""
+        self.navigator_request = True
+
+    def _request_plan(self, reason):
+        """Request one planning cycle."""
+        self.plan_requested = True
+        self.pending_plan_reason = str(reason)
+
+    def _path_is_blocked(self):
+        """Return True if the current path crosses a blocked cell."""
         if (
-            self.planner_mode == 'astar'
-            and self.goal is not None
-            and self.plan_requested
+            self.planner_mode != 'astar'
+            or self.map_msg is None
+            or not self.current_path
         ):
-            self.plan_requested = True
+            return False
+
+        msg = self.map_msg
+        info = msg.info
+
+        if (
+            info.resolution <= 0.0
+            or info.width <= 0
+            or info.height <= 0
+        ):
+            return False
+
+        if len(msg.data) != info.width * info.height:
+            return False
+
+        raw_grid = [
+            [
+                int(msg.data[y * info.width + x])
+                for x in range(info.width)
+            ]
+            for y in range(info.height)
+        ]
+
+        try:
+            cost_map = build_cost_map(
+                grid=raw_grid,
+                unknown_policy=self.unknown_policy,
+                unknown_cost=self.unknown_cost,
+                proximity_weight=self.proximity_weight,
+                occupied_threshold=self.occupied_threshold,
+            )
+        except ValueError:
+            return False
+
+        origin = info.origin.position
+
+        for x, y in self.current_path:
+            cell = world_to_cell(
+                x=x,
+                y=y,
+                origin_x=origin.x,
+                origin_y=origin.y,
+                resolution=info.resolution,
+                width=info.width,
+                height=info.height,
+            )
+
+            if cell is None:
+                return True
+
+            cell_x, cell_y = cell
+
+            if not math.isfinite(
+                cost_map[cell_y][cell_x]
+            ):
+                return True
+
+        return False
 
     def _planning_tick(self):
-        """Execute one requested plan."""
-        if not self.plan_requested:
-            return
-
+        """Evaluate replanning triggers and execute planning."""
         if self.position is None or self.goal is None:
             return
 
-        if self.planner_mode == 'direct':
-            self._plan_direct()
+        now = time.monotonic()
+
+        if not self.plan_requested and self.has_completed_plan:
+            reason = self.replan_policy.reason(
+                now=now,
+                path=self.current_path,
+                position=self.position,
+                goal_changed=False,
+                path_blocked=self._path_is_blocked(),
+                navigator_request=self.navigator_request,
+            )
+
+            if reason is not None:
+                self._request_plan(reason)
+
+        if not self.plan_requested:
             return
 
-        if self.map_msg is None:
+        if (
+            self.planner_mode == 'astar'
+            and self.map_msg is None
+        ):
             self._publish_status(
                 PlannerStatus.NO_MAP,
                 0.0,
@@ -291,7 +417,27 @@ class GlobalPlanner(Node):
             )
             return
 
-        self._plan_astar()
+        is_replan = (
+            self.has_completed_plan
+            and self.pending_plan_reason != 'initial_goal'
+        )
+
+        if is_replan:
+            self.replan_count += 1
+
+        self.navigator_request = False
+
+        if self.planner_mode == 'direct':
+            self._plan_direct()
+        else:
+            self._plan_astar()
+
+        self.replan_policy.mark_planned(
+            time.monotonic()
+        )
+
+        self.has_completed_plan = True
+        self.pending_plan_reason = None
 
     def _plan_direct(self):
         """Publish a straight path without using a map."""
@@ -494,6 +640,14 @@ class GlobalPlanner(Node):
             pose.pose.orientation.w = 1.0
 
             msg.poses.append(pose)
+
+        self.current_path = [
+            (
+                float(x),
+                float(y),
+            )
+            for x, y, _ in points
+        ]
 
         self.path_pub.publish(msg)
 
