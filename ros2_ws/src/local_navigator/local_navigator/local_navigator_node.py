@@ -21,7 +21,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
@@ -32,7 +32,11 @@ from hackathon_interfaces.msg import (
 )
 
 from .avoidance import AvoidanceConfig, reactive_correction
-from .follower import direct_position_setpoint, yaw_towards
+from .follower import (
+    direct_position_setpoint,
+    lookahead_point,
+    yaw_towards,
+)
 from .speed_policy import navigation_speed
 
 
@@ -49,6 +53,8 @@ class LocalNavigator(Node):
         self.current_yaw = 0.0
         self.goal = None
         self.last_goal_monotonic = None
+        self.processed_path = []
+        self.processed_path_received = False
         self.ranges = None
         self.localization_status = None
 
@@ -69,6 +75,13 @@ class LocalNavigator(Node):
             PoseStamped,
             '/hk/goal',
             self._goal_callback,
+            10,
+        )
+
+        self.create_subscription(
+            Path,
+            '/hk/path/processed',
+            self._path_callback,
             10,
         )
 
@@ -97,14 +110,15 @@ class LocalNavigator(Node):
         )
 
         self.get_logger().info(
-            'TP-16/32/34 local navigator ready: '
-            '/hk/state + /hk/goal + /hk/ranges + '
+            'TP-16/30/32/34 local navigator ready: '
+            '/hk/state + /hk/goal + /hk/path/processed + /hk/ranges + '
             '/hk/localization_health -> /hk/cmd/nav'
         )
 
     def _declare_parameters(self):
         """Declare local-navigation parameters."""
         self.declare_parameter('control_rate', 20.0)
+        self.declare_parameter('lookahead_distance', 0.4)
         self.declare_parameter('nominal_speed', 0.3)
         self.declare_parameter('degraded_speed', 0.15)
         self.declare_parameter('max_speed', 0.5)
@@ -120,6 +134,12 @@ class LocalNavigator(Node):
         """Read and validate local-navigation parameters."""
         self.control_rate = float(
             self.get_parameter('control_rate').value
+        )
+
+        self.lookahead_distance = float(
+            self.get_parameter(
+                'lookahead_distance'
+            ).value
         )
 
         self.nominal_speed = float(
@@ -160,6 +180,11 @@ class LocalNavigator(Node):
 
         if self.control_rate <= 0.0:
             raise ValueError('control_rate must be positive')
+
+        if self.lookahead_distance <= 0.0:
+            raise ValueError(
+                'lookahead_distance must be positive'
+            )
 
         if self.nominal_speed <= 0.0:
             raise ValueError('nominal_speed must be positive')
@@ -220,12 +245,62 @@ class LocalNavigator(Node):
             )
             return
 
-        self.goal = tuple(
+        new_goal = tuple(
             float(value)
             for value in values
         )
 
+        if (
+            self.goal is not None
+            and new_goal != self.goal
+            and self.processed_path_received
+        ):
+            # Once path-based navigation is active, wait for the
+            # new processed path instead of following the new goal
+            # directly during the planner transition.
+            self.processed_path = []
+
+        self.goal = new_goal
         self.last_goal_monotonic = time.monotonic()
+
+    def _path_callback(self, msg):
+        """Store the latest processed global path."""
+        if msg.header.frame_id not in ('', self.map_frame):
+            self.get_logger().warn(
+                f'Ignoring processed path in frame '
+                f'"{msg.header.frame_id}"; '
+                f'expected "{self.map_frame}"'
+            )
+            return
+
+        points = []
+
+        for pose in msg.poses:
+            values = (
+                pose.pose.position.x,
+                pose.pose.position.y,
+                pose.pose.position.z,
+            )
+
+            if not all(
+                math.isfinite(value)
+                for value in values
+            ):
+                self.get_logger().warn(
+                    'Ignoring processed path with '
+                    'non-finite position'
+                )
+                return
+
+            points.append(
+                tuple(
+                    float(value)
+                    for value in values
+                )
+            )
+
+        self.processed_path_received = True
+        self.processed_path = points
 
     def _ranges_callback(self, msg):
         """Store the latest horizontal range measurements."""
@@ -278,19 +353,37 @@ class LocalNavigator(Node):
 
     def _control_tick(self):
         """Publish one local-navigation proposal."""
-        if self.position is None or self.goal is None:
+        if self.position is None:
             return
 
-        if self.last_goal_monotonic is None:
-            return
+        if self.processed_path_received:
+            if not self.processed_path:
+                # An empty processed path means planning failed or no
+                # executable route is currently available.
+                return
 
-        goal_age = (
-            time.monotonic()
-            - self.last_goal_monotonic
-        )
+            navigation_target = lookahead_point(
+                path=self.processed_path,
+                position=self.position,
+                lookahead_distance=self.lookahead_distance,
+            )
 
-        if goal_age > self.goal_timeout:
-            return
+        else:
+            if self.goal is None:
+                return
+
+            if self.last_goal_monotonic is None:
+                return
+
+            goal_age = (
+                time.monotonic()
+                - self.last_goal_monotonic
+            )
+
+            if goal_age > self.goal_timeout:
+                return
+
+            navigation_target = self.goal
 
         active_speed = navigation_speed(
             status=self.localization_status,
@@ -313,7 +406,7 @@ class LocalNavigator(Node):
 
         follower_target = direct_position_setpoint(
             position=self.position,
-            goal=self.goal,
+            goal=navigation_target,
             max_step=max_step,
             z_nominal=self.z_nominal,
         )
@@ -372,7 +465,7 @@ class LocalNavigator(Node):
 
         yaw = yaw_towards(
             position=self.position,
-            target=self.goal,
+            target=navigation_target,
             current_yaw=self.current_yaw,
         )
 

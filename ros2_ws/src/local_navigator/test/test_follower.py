@@ -84,3 +84,87 @@ def test_rejects_nonpositive_step():
             max_step=0.0,
             z_nominal=0.5,
         )
+
+
+def test_lookahead_on_straight_path():
+    from local_navigator.follower import lookahead_point
+
+    target = lookahead_point(
+        path=[
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.5),
+        ],
+        position=(0.0, 0.0, 0.5),
+        lookahead_distance=0.4,
+    )
+
+    assert target == pytest.approx(
+        (0.4, 0.0, 0.5)
+    )
+
+
+def test_lookahead_starts_from_projection():
+    from local_navigator.follower import lookahead_point
+
+    target = lookahead_point(
+        path=[
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.5),
+            (2.0, 0.0, 0.5),
+        ],
+        position=(0.6, 0.2, 0.5),
+        lookahead_distance=0.5,
+    )
+
+    assert target == pytest.approx(
+        (1.1, 0.0, 0.5)
+    )
+
+
+def test_lookahead_continues_around_corner():
+    from local_navigator.follower import lookahead_point
+
+    target = lookahead_point(
+        path=[
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.5),
+            (1.0, 1.0, 0.5),
+        ],
+        position=(0.8, 0.0, 0.5),
+        lookahead_distance=0.5,
+    )
+
+    assert target == pytest.approx(
+        (1.0, 0.3, 0.5)
+    )
+
+
+def test_lookahead_clamps_to_final_point():
+    from local_navigator.follower import lookahead_point
+
+    target = lookahead_point(
+        path=[
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.5),
+        ],
+        position=(0.9, 0.0, 0.5),
+        lookahead_distance=0.5,
+    )
+
+    assert target == pytest.approx(
+        (1.0, 0.0, 0.5)
+    )
+
+
+def test_lookahead_rejects_nonpositive_distance():
+    from local_navigator.follower import lookahead_point
+
+    with pytest.raises(ValueError):
+        lookahead_point(
+            path=[
+                (0.0, 0.0, 0.5),
+                (1.0, 0.0, 0.5),
+            ],
+            position=(0.0, 0.0, 0.5),
+            lookahead_distance=0.0,
+        )
