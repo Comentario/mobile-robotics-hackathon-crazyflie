@@ -234,16 +234,6 @@ def test_invalid_unknown_policy_is_rejected():
         )
 
 
-@pytest.mark.skip(reason='TP-31: planner scenario matrix')
-def test_u_shape_escape():
-    pass
-
-
-@pytest.mark.skip(reason='TP-31: planner scenario matrix')
-def test_narrow_corridor():
-    pass
-
-
 def test_binary_cost_map_blocks_occupied_and_unknown():
     from global_planner.astar import binary_cost_map
 
