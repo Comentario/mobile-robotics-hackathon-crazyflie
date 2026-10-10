@@ -22,6 +22,7 @@ import time
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
+from std_msgs.msg import String
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
@@ -33,6 +34,7 @@ from hackathon_interfaces.msg import (
 
 from .avoidance import (
     AvoidanceConfig,
+    estimate_closing_rates,
     reactive_correction,
     vertical_limit,
 )
@@ -77,11 +79,20 @@ class LocalNavigator(Node):
         self.processed_path = []
         self.processed_path_received = False
         self.ranges = None
+        self.closing_rates = None
+        self.last_ranges_monotonic = None
+        self.last_replan_reason = None
         self.localization_status = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
             '/hk/cmd/nav',
+            10,
+        )
+
+        self.replan_pub = self.create_publisher(
+            String,
+            '/hk/replan_request',
             10,
         )
 
@@ -131,7 +142,7 @@ class LocalNavigator(Node):
         )
 
         self.get_logger().info(
-            'TP-16/30/32/33/34/35 local navigator ready: '
+            'TP-16/30/32/33/34/35/36 local navigator ready: '
             '/hk/state + /hk/goal + /hk/path/processed + /hk/ranges + '
             '/hk/localization_health -> /hk/cmd/nav'
         )
@@ -153,6 +164,7 @@ class LocalNavigator(Node):
 
         self.declare_parameter('warning_distance', 0.5)
         self.declare_parameter('critical_distance', 0.2)
+        self.declare_parameter('ttc_threshold', 1.5)
         self.declare_parameter('avoidance_speed', 0.2)
 
     def _read_parameters(self):
@@ -215,6 +227,9 @@ class LocalNavigator(Node):
             ),
             critical_distance=float(
                 self.get_parameter('critical_distance').value
+            ),
+            ttc_threshold=float(
+                self.get_parameter('ttc_threshold').value
             ),
             avoidance_speed=float(
                 self.get_parameter('avoidance_speed').value
@@ -372,8 +387,10 @@ class LocalNavigator(Node):
         self.processed_path = points
 
     def _ranges_callback(self, msg):
-        """Store the latest horizontal and vertical range measurements."""
-        self.ranges = {
+        """Store ranges and estimate horizontal obstacle closing speeds."""
+        now = time.monotonic()
+
+        new_ranges = {
             'front': float(msg.front),
             'back': float(msg.back),
             'left': float(msg.left),
@@ -381,6 +398,34 @@ class LocalNavigator(Node):
             'up': float(msg.up),
             'down': float(msg.down),
         }
+
+        if (
+            self.ranges is not None
+            and self.last_ranges_monotonic is not None
+        ):
+            dt = (
+                now
+                - self.last_ranges_monotonic
+            )
+
+            if (
+                math.isfinite(dt)
+                and dt > 0.0
+            ):
+                self.closing_rates = (
+                    estimate_closing_rates(
+                        previous_ranges=self.ranges,
+                        current_ranges=new_ranges,
+                        dt=dt,
+                    )
+                )
+            else:
+                self.closing_rates = None
+        else:
+            self.closing_rates = None
+
+        self.ranges = new_ranges
+        self.last_ranges_monotonic = now
 
     def _localization_health_callback(self, msg):
         """Store the latest localization-health state."""
@@ -421,6 +466,20 @@ class LocalNavigator(Node):
             vx * scale,
             vy * scale,
         )
+
+    def _request_replan(self, reason):
+        """Publish one replan request per continuous blocked condition."""
+        reason = str(reason or 'local_blocked')
+
+        if reason == self.last_replan_reason:
+            return
+
+        msg = String()
+        msg.data = reason
+
+        self.replan_pub.publish(msg)
+
+        self.last_replan_reason = reason
 
     def _control_tick(self):
         """Publish one smoothed local-navigation proposal."""
@@ -550,9 +609,9 @@ class LocalNavigator(Node):
                 self.current_yaw,
             )
 
-            corrected_body, _, _ = reactive_correction(
+            corrected_body, blocked, reason = reactive_correction(
                 ranges=self.ranges,
-                closing_rates=None,
+                closing_rates=self.closing_rates,
                 velocity_body=(
                     vx_body,
                     vy_body,
@@ -560,6 +619,11 @@ class LocalNavigator(Node):
                 ),
                 config=self.avoidance_config,
             )
+
+            if blocked:
+                self._request_replan(reason)
+            else:
+                self.last_replan_reason = None
 
             vx_map, vy_map = self._body_to_map(
                 corrected_body[0],

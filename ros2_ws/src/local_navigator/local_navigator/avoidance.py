@@ -22,8 +22,21 @@ class AvoidanceConfig:
                 'warning_distance must be greater than critical_distance'
             )
 
-        if self.avoidance_speed < 0.0:
-            raise ValueError('avoidance_speed must be non-negative')
+        if (
+            not math.isfinite(self.ttc_threshold)
+            or self.ttc_threshold < 0.0
+        ):
+            raise ValueError(
+                'ttc_threshold must be non-negative and finite'
+            )
+
+        if (
+            not math.isfinite(self.avoidance_speed)
+            or self.avoidance_speed < 0.0
+        ):
+            raise ValueError(
+                'avoidance_speed must be non-negative and finite'
+            )
 
 
 def _range_value(ranges, name):
@@ -62,13 +75,103 @@ def _avoidance_strength(distance, config):
     ) / span
 
 
+def estimate_closing_rates(
+    previous_ranges,
+    current_ranges,
+    dt,
+):
+    """Estimate positive obstacle closing speeds from consecutive ranges.
+
+    A positive value means that the measured obstacle is approaching.
+    Stable, receding, invalid, or unavailable measurements return zero.
+    """
+    dt = float(dt)
+
+    if not math.isfinite(dt) or dt <= 0.0:
+        raise ValueError(
+            'dt must be positive and finite'
+        )
+
+    result = {}
+
+    for name in (
+        'front',
+        'back',
+        'left',
+        'right',
+    ):
+        previous = _range_value(
+            previous_ranges,
+            name,
+        )
+
+        current = _range_value(
+            current_ranges,
+            name,
+        )
+
+        if not (
+            math.isfinite(previous)
+            and math.isfinite(current)
+            and previous >= 0.0
+            and current >= 0.0
+        ):
+            result[name] = 0.0
+            continue
+
+        result[name] = max(
+            0.0,
+            (previous - current) / dt,
+        )
+
+    return result
+
+
+def _minimum_ttc(ranges, closing_rates):
+    """Return the smallest valid horizontal TTC and its sensor name."""
+    best_ttc = math.inf
+    best_sensor = None
+
+    for name in (
+        'front',
+        'back',
+        'left',
+        'right',
+    ):
+        distance = _range_value(
+            ranges,
+            name,
+        )
+
+        closing_rate = _range_value(
+            closing_rates,
+            name,
+        )
+
+        if not (
+            math.isfinite(distance)
+            and distance > 0.0
+            and math.isfinite(closing_rate)
+            and closing_rate > 0.0
+        ):
+            continue
+
+        ttc = distance / closing_rate
+
+        if ttc < best_ttc:
+            best_ttc = ttc
+            best_sensor = name
+
+    return best_ttc, best_sensor
+
+
 def reactive_correction(
     ranges,
     closing_rates,
     velocity_body,
     config,
 ):
-    """Apply horizontal reactive avoidance in the body frame.
+    """Apply reactive horizontal obstacle avoidance in the body frame.
 
     REP-103 body convention:
       +x: front
@@ -76,31 +179,38 @@ def reactive_correction(
       +y: left
       -y: right
 
-    TP-34 uses only instantaneous range measurements. Closing rates are
-    intentionally reserved for TP-36.
+    TP-34 applies instantaneous range avoidance.
+    TP-36 additionally commands horizontal hover when an approaching
+    obstacle has TTC less than or equal to config.ttc_threshold.
     """
-    del closing_rates
-
     vx, vy, vz = (
         float(value)
         for value in velocity_body
     )
 
-    if not all(math.isfinite(value) for value in (vx, vy, vz)):
-        raise ValueError('velocity_body must contain finite values')
+    if not all(
+        math.isfinite(value)
+        for value in (vx, vy, vz)
+    ):
+        raise ValueError(
+            'velocity_body must contain finite values'
+        )
 
     front = _avoidance_strength(
         _range_value(ranges, 'front'),
         config,
     )
+
     back = _avoidance_strength(
         _range_value(ranges, 'back'),
         config,
     )
+
     left = _avoidance_strength(
         _range_value(ranges, 'left'),
         config,
     )
+
     right = _avoidance_strength(
         _range_value(ranges, 'right'),
         config,
@@ -113,25 +223,37 @@ def reactive_correction(
         if vx > 0.0:
             vx *= 1.0 - front
 
-        vx -= config.avoidance_speed * front
+        vx -= (
+            config.avoidance_speed
+            * front
+        )
 
     if back > 0.0:
         if vx < 0.0:
             vx *= 1.0 - back
 
-        vx += config.avoidance_speed * back
+        vx += (
+            config.avoidance_speed
+            * back
+        )
 
     if left > 0.0:
         if vy > 0.0:
             vy *= 1.0 - left
 
-        vy -= config.avoidance_speed * left
+        vy -= (
+            config.avoidance_speed
+            * left
+        )
 
     if right > 0.0:
         if vy < 0.0:
             vy *= 1.0 - right
 
-        vy += config.avoidance_speed * right
+        vy += (
+            config.avoidance_speed
+            * right
+        )
 
     epsilon = 1e-9
 
@@ -170,6 +292,26 @@ def reactive_correction(
         )
     )
 
+    if (
+        config.ttc_threshold > 0.0
+        and closing_rates is not None
+    ):
+        minimum_ttc, sensor = _minimum_ttc(
+            ranges,
+            closing_rates,
+        )
+
+        if (
+            sensor is not None
+            and minimum_ttc
+            <= config.ttc_threshold
+        ):
+            return (
+                (0.0, 0.0, vz),
+                True,
+                f'ttc_low:{sensor}',
+            )
+
     if blocked:
         vx = 0.0
         vy = 0.0
@@ -180,7 +322,11 @@ def reactive_correction(
         else ''
     )
 
-    return (vx, vy, vz), blocked, reason
+    return (
+        (vx, vy, vz),
+        blocked,
+        reason,
+    )
 
 
 def vertical_limit(
