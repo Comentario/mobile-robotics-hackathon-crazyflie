@@ -33,7 +33,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_five_by_three_survey_moves_replans_and_returns_with_wall_sensing(self):
         nav = Navigation(speed=.2, warning=.8, timeout=30,
-                         coverage_area=(5, 3), survey_seconds=180)
+                         coverage_area=(5, 3), survey_seconds=180, mapping_radius=4.)
         x = y = 0.
         max_distance = 0
         for i in range(2400):
@@ -86,7 +86,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_static_obstacle_survey_replans_preserves_clearance_and_returns(self):
         nav = Navigation(speed=.2, warning=.8, timeout=30,
-                         coverage_area=(5, 3), survey_seconds=180)
+                         coverage_area=(5, 3), survey_seconds=180, mapping_radius=4.)
         x = y = 0.
         minimum = math.inf
         for i in range(2400):

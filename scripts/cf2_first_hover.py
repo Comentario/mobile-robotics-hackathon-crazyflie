@@ -82,7 +82,9 @@ def main():
     parser.add_argument('--survey-heights', type=float, nargs='+', metavar='Z_M',
                         help='Discrete increasing height layers; first must match --height')
     parser.add_argument('--scan-yaw-rate', type=float, default=0,
-                        help='In-place 90-degree scans between movement intervals, degrees/s (0 disables, maximum 15)')
+                        help='Rotate while moving and mapping, degrees/s (0 disables rotation, maximum 15)')
+    parser.add_argument('--mapping-radius', type=float, default=.8,
+                        help='Reveal valid rays only within this local radius in metres (default 0.8)')
     parser.add_argument('--live-map', action='store_true',
                         help='Stream telemetry to the local live map via UDP')
     parser.add_argument('--map-port', type=int, default=8766)
@@ -105,6 +107,8 @@ def main():
         parser.error('--scan-yaw-rate must be between 0 and 15 degrees/s')
     if args.scan_yaw_rate and not args.coverage_area:
         parser.error('--scan-yaw-rate requires --coverage-area')
+    if not math.isfinite(args.mapping_radius) or not .3 <= args.mapping_radius <= 4:
+        parser.error('--mapping-radius must be between 0.3 and 4 m')
     if args.coverage_area:
         if not args.navigate or args.forward or args.square_side or args.rectangle or args.return_home:
             parser.error('--coverage-area requires --fly --navigate and cannot be combined with other routes')
@@ -164,7 +168,7 @@ def main():
                          timeout=args.waypoint_timeout if goals or args.coverage_area else args.hover_seconds,
                          coverage_area=args.coverage_area, coverage_spacing=args.coverage_spacing,
                          survey_seconds=args.survey_seconds, survey_heights=args.survey_heights,
-                         scan_yaw_rate=args.scan_yaw_rate)
+                         scan_yaw_rate=args.scan_yaw_rate, mapping_radius=args.mapping_radius)
     session_id = uuid4().hex[:12]
     if args.fly:
         args.flow_diagnostics = True
@@ -339,6 +343,9 @@ def main():
                                         snapshot['shared_frame_aligned'] = False
                                         map_file = args.record.with_name(args.record.stem + '_map.json')
                                         map_file.write_text(json.dumps(snapshot, allow_nan=False))
+                                        from cf2_export_map import export_map
+                                        for file in export_map(snapshot, map_file):
+                                            print(f'Offline map: {file}', flush=True)
                                         print(f'Map snapshot: {map_file}', flush=True)
                                         print('NAV LAND: ' + decision['reason'], flush=True)
                                         break
@@ -351,10 +358,6 @@ def main():
                                         print(f"NAV: {decision['state']} | {decision['reason']} | "
                                               f"body velocity={decision['velocity_body']} | "
                                               f"waypoint={decision['waypoint_index']} | replans={decision['replans']}", flush=True)
-                                        if decision['state'] == 'SCAN':
-                                            print(f"SCAN: {decision.get('scan_progress_deg', 0)} / 90 deg | target frozen | mapping active", flush=True)
-                                        if decision.get('scan_outcome'):
-                                            print(f"SCAN END: {decision['scan_outcome']}", flush=True)
                                         if decision.get('local_target'):
                                             target = decision['local_target']
                                             print(f"{decision.get('workflow', 'MOVE')}: local target XY="

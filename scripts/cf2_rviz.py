@@ -130,9 +130,10 @@ class RvizPublisher:
                     raw = s['ranges_mm'].get('range.'+direction)
                     if raw is None or not math.isfinite(raw) or not 50 <= raw <= 4000:
                         continue
+                    distance = min(raw/1000, s.get('mapping_radius_m', .8))
                     beam = marker(direction.title()+' ToF', Marker.LINE_LIST, color, (.012, 0., 0.))
                     beam.points = [point(x, y, .08), point(
-                        x+raw/1000*math.cos(yaw+offset), y+raw/1000*math.sin(yaw+offset), .08)]
+                        x+distance*math.cos(yaw+offset), y+distance*math.sin(yaw+offset), .08)]
         coverage = (s['navigation'] or {}).get('coverage')
         if coverage:
             width, length = coverage['area']
@@ -143,24 +144,10 @@ class RvizPublisher:
             boundary.points = [point(cx+x, cy+y, .015) for x, y in
                                [(-width/2,-length/2), (width/2,-length/2),
                                 (width/2,length/2), (-width/2,length/2), (-width/2,-length/2)]]
-            pending = marker('Survey targets pending', Marker.SPHERE_LIST, (.58, .65, .75, .55), (.035, .035, .035))
-            visited = marker('Survey targets visited', Marker.SPHERE_LIST, (.12, .65, .40, 1.), (.05, .05, .05))
-            visited_indices = set(coverage['visited'])
-            for i, (x, y) in enumerate(coverage['targets']):
-                (visited if i in visited_indices else pending).points.append(point(x, y, .04))
             local_target = (s['navigation'] or {}).get('local_target')
             if local_target is not None:
                 target = marker('Local movement target', Marker.CYLINDER, (.64, .26, .85, 1.), (.09, .09, .015))
                 target.pose.position = point(*local_target[:2], .03)
-            if (s['navigation'] or {}).get('state') == 'SCAN' and pose:
-                ring = marker('Scanning in place', Marker.LINE_STRIP, (1., .55, .08, 1.), (.015,0.,0.))
-                ring.points = [point(pose['stateEstimate.x']+.2*math.cos(i*math.pi/24),
-                    pose['stateEstimate.y']+.2*math.sin(i*math.pi/24), .1) for i in range(49)]
-            unresolved = marker('Unresolved survey targets', Marker.LINE_LIST, (.85, .15, .18, 1.), (.015, 0., 0.))
-            for entry in coverage.get('unresolved', []):
-                x, y = entry['target']
-                for dx in (-.06, .06):
-                    unresolved.points.extend([point(x-dx, y-.06, .13), point(x+dx, y+.06, .13)])
         # No world-space text: billboard fonts distort in the WSL top-down view.
         # Status, freshness and coverage are reported by the viewer terminal.
         self.markers_pub.publish(markers)

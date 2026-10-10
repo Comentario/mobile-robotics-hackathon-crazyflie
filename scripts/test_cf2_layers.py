@@ -34,7 +34,7 @@ class LayerTests(unittest.TestCase):
         self.assertEqual(len(m.snapshot(5)['trail']),2102)
 
     def test_display_clips_observations_without_hiding_control_obstacles(self):
-        m=LayeredMap()
+        m=LayeredMap(mapping_radius=4.)
         self.sample(m,.3,1000,distance=1500)
         m.update({'log':'cf2_navigation','session_id':'one','data':
                   {'start':[0,0],'coverage':{'area':[2,2]}}},now=1.1)

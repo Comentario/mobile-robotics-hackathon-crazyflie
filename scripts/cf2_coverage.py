@@ -11,10 +11,11 @@ from mission_manager.mission import Waypoint, NAVIGATE, LANDING, ABORTED
 
 class CoverageMission:
     def __init__(self, origin, area, height, spacing=.5, margin=.35,
-                 timeout=30, budget=180):
+                 timeout=30, budget=180, cross_pass=False):
         self.origin, self.area = tuple(origin), tuple(area)
         self.height, self.timeout, self.budget = height, timeout, budget
         self.margin, self.repair_used = margin, False
+        self.cross_pass = cross_pass
         width, length = area
         def axis(size):
             count = math.ceil((size-2*margin)/spacing)
@@ -27,11 +28,12 @@ class CoverageMission:
                         for x in ((xs[0], xs[-1]) if i % 2 == 0 else (xs[-1], xs[0]))]
         self.cross_start = len(self.targets)
         cross_xs = xs if self.targets[-1][0] == origin[0]+xs[0] else xs[::-1]
-        for i, x in enumerate(cross_xs):
-            for y in ((ys[-1], ys[0]) if i % 2 == 0 else (ys[0], ys[-1])):
-                xy = (origin[0]+x, origin[1]+y)
-                if xy != self.targets[-1]:
-                    self.targets.append(xy)
+        if cross_pass:
+            for i, x in enumerate(cross_xs):
+                for y in ((ys[-1], ys[0]) if i % 2 == 0 else (ys[0], ys[-1])):
+                    xy = (origin[0]+x, origin[1]+y)
+                    if xy != self.targets[-1]:
+                        self.targets.append(xy)
         # Keep successive sweep targets nearby, including the approach from
         # takeoff. The follower preserves velocity between reached targets.
         endpoints, self.targets = self.targets, []
@@ -160,7 +162,7 @@ class CoverageMission:
                 total += 1
                 observed += value >= 0
                 occupied += value >= 50
-        return {'area': list(self.area), 'phase': self.phase,
+        return {'area': list(self.area), 'phase': self.phase, 'cross_pass': self.cross_pass,
                 'targets': self.targets, 'visited': self.visited,
                 'active_target': self.active, 'unresolved': self.unresolved,
                 'deferred_count': len(self.deferred),

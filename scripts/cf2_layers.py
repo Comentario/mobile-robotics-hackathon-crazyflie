@@ -29,11 +29,12 @@ def validate_heights(heights):
 
 class LayeredMap:
     def __init__(self, heights=(.3,), width=160, resolution=.05, tolerance=.045,
-                 decay_seconds=600, persistent_seconds=600, retain_observations=True):
+                 decay_seconds=600, persistent_seconds=600, retain_observations=True, mapping_radius=.8):
         self.heights = validate_heights(heights)
         self.width, self.resolution, self.tolerance = width, resolution, tolerance
         self.decay_seconds, self.persistent_seconds = decay_seconds, persistent_seconds
         self.retain_observations = retain_observations
+        self.mapping_radius = mapping_radius
         self.lock = RLock()
         self.reset('waiting')
 
@@ -54,7 +55,8 @@ class LayeredMap:
             if z not in self.maps:
                 self.maps[z] = LiveMap(self.resolution, self.width, z-self.tolerance,
                     z+self.tolerance, decay_seconds=self.decay_seconds,
-                    persistent_seconds=self.persistent_seconds, retain_observations=self.retain_observations)
+                    persistent_seconds=self.persistent_seconds, retain_observations=self.retain_observations,
+                    mapping_radius=self.mapping_radius, record_visited_centres=True)
                 self.maps[z].reset(self.session)
                 self.maps[z].origin = self.grid_origin
                 self.maps[z].start = self.start
@@ -80,6 +82,11 @@ class LayeredMap:
         name, data = row.get('log'), row.get('data', {})
         if name == 'cf2_navigation':
             self.navigation = dict(data)
+            radius = data.get('mapping_radius_m')
+            if radius is not None and math.isfinite(radius) and .3 <= radius <= 4:
+                self.mapping_radius = radius
+                for m in self.maps.values():
+                    m.mapping_radius = radius
             if data.get('survey_heights'):
                 self._configure(data['survey_heights'])
             reference = data.get('start')
@@ -172,4 +179,5 @@ class LayeredMap:
                 max(now-self.last_pose_at, now-self.last_ranges_at),
             composite_is_visualization_only=True, shared_frame_aligned=False,
             map_validated_for_drone1=False, height_reference='Session EKF Z in metres')
+        current['mapping_radius_m'] = self.mapping_radius
         return current

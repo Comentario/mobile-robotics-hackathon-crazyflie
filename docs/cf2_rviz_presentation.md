@@ -140,3 +140,12 @@ The full flight trail is retained for the session. Presentation is clipped to
 the configured survey rectangle. Each height is also published separately at
 `/cf2/presentation/layer_N`. The combined view is for presentation; CF1 must
 use a validated height layer with a measured frame alignment.
+
+## Current one-height live profile
+
+Follow [the current coverage guide](cf2_coverage_demo.md). The active profile
+rotates WHILE translating; it no longer pauses for stationary SCAN. Mapping
+uses a local 0.80 m radius and valid measurements only. Red X / pending target
+markers are removed from the scene, while their diagnostics remain recorded.
+The exporter writes a cropped conservative PGM/YAML pair plus a handoff JSON
+for offline exchange with CF1. Shared coordinates still need measured alignment.

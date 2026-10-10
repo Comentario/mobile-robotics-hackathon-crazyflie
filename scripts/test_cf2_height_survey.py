@@ -43,6 +43,6 @@ class HeightSurveyTests(unittest.TestCase):
         else: self.fail('Two-level survey did not return')
         self.assertTrue(changed)
         self.assertTrue(rotated)
-        self.assertTrue(all(layer['stats']['hits']>0 for layer in nav.mapper.snapshot(now)['layers']))
+        self.assertTrue(all(layer['stats']['mapped_samples']>0 for layer in nav.mapper.snapshot(now)['layers']))
 
 if __name__=='__main__': unittest.main()

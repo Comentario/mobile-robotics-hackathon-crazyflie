@@ -71,7 +71,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Durability Policy: Volatile
     - Class: rviz_default_plugins/MarkerArray
-      Name: Map - robot - scan - ToF
+      Name: Map - robot - ToF
       Enabled: true
       Value: true
       Topic:

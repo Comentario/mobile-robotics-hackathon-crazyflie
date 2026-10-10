@@ -17,12 +17,17 @@ from cf2_build_map import ANGLES, ray_endpoint
 
 class LiveMap:
     def __init__(self, resolution=0.05, width=160, min_height=0.2, max_height=0.4,
-                 decay_seconds=120, persistent_seconds=5, retain_observations=False):
+                 decay_seconds=120, persistent_seconds=5, retain_observations=False, mapping_radius=4.,
+                 record_visited_centres=False):
         self.resolution, self.width = resolution, width
         self.min_height, self.max_height = min_height, max_height
         self.decay_seconds = decay_seconds
         self.persistent_seconds = persistent_seconds
         self.retain_observations = retain_observations
+        if not math.isfinite(mapping_radius) or not .3 <= mapping_radius <= 4:
+            raise ValueError('Mapping radius must be between 0.3 and 4 m')
+        self.mapping_radius = mapping_radius
+        self.record_visited_centres = record_visited_centres
         self.lock = Lock()
         self.reset('waiting')
 
@@ -41,7 +46,7 @@ class LiveMap:
         self.confirmed_at = {}
         self.recent_hits = deque(maxlen=400)
         self.stats = {'hits': 0, 'invalid_ranges': 0, 'unpaired': 0,
-                      'outside_map': 0, 'mapped_samples': 0}
+                      'outside_map': 0, 'mapped_samples': 0, 'free_rays': 0}
 
     def cell(self, x, y):
         cx = math.floor((x - self.origin[0]) / self.resolution)
@@ -82,6 +87,14 @@ class LiveMap:
                                        data['stateEstimate.y'] - half)
                         self.start = (data['stateEstimate.x'], data['stateEstimate.y'])
                     self.trail.append((data['stateEstimate.x'], data['stateEstimate.y']))
+                    # Only the actually traversed centre cell is free from pose
+                    # evidence. Never reveal an invented visibility disk.
+                    if self.record_visited_centres:
+                        cell = self.cell(data['stateEstimate.x'], data['stateEstimate.y'])
+                        if cell is not None:
+                            self.scores[cell], self.updated[cell] = -4, now
+                            self.hit_history.pop(cell, None)
+                            self.confirmed_at.pop(cell, None)
                 return
             if name != 'cf2_ranges':
                 return
@@ -102,12 +115,14 @@ class LiveMap:
                 if raw is None or not math.isfinite(raw) or not 50 <= raw <= 4000:
                     self.stats['invalid_ranges'] += 1
                     continue
-                end = ray_endpoint(pose, direction, raw / 1000)
+                distance = min(raw/1000, self.mapping_radius)
+                obstacle = raw/1000 <= self.mapping_radius
+                end = ray_endpoint(pose, direction, distance)
                 target = self.cell(*end)
                 if target is None or self.cell(*start) is None:
                     self.stats['outside_map'] += 1
                     continue
-                steps = max(1, math.ceil(raw / 1000 / (self.resolution / 2)))
+                steps = max(1, math.ceil(distance / (self.resolution / 2)))
                 free = set()
                 for step in range(steps):
                     fraction = step / steps
@@ -115,7 +130,9 @@ class LiveMap:
                                      start[1] + (end[1] - start[1]) * fraction)
                     if cell is not None and cell != target:
                         free.add(cell)
-                for cell, delta in [(cell, -1) for cell in free] + [(target, 3)]:
+                if not obstacle:
+                    free.add(target)
+                for cell, delta in [(cell, -1) for cell in free] + ([(target, 3)] if obstacle else []):
                     previous = self.updated[cell]
                     if previous is None or (not self.retain_observations and now - previous > self.decay_seconds):
                         self.scores[cell] = 0
@@ -125,6 +142,9 @@ class LiveMap:
                     if cell in free and self.scores[cell] <= 0:
                         self.hit_history.pop(cell, None)
                         self.confirmed_at.pop(cell, None)
+                if not obstacle:
+                    self.stats['free_rays'] += 1
+                    continue
                 history = self.hit_history.setdefault(target, deque(maxlen=32))
                 if history and now-history[-1] > 1:
                     history.clear()
@@ -347,6 +367,15 @@ def main():
                       f"Z={position.get('stateEstimate.z')} | levels={state.get('survey_heights', [])} | "
                       f"workflow={(state.get('navigation') or {}).get('workflow', 'WAITING')} | "
                       f"mapped={state['stats']['mapped_samples']} | trail={len(state['trail'])}", flush=True)
+                readings = []
+                for direction in ('front', 'left', 'back', 'right'):
+                    raw = state['ranges_mm'].get('range.'+direction)
+                    value = f'{raw/1000:.2f} m' if (raw is not None and
+                        math.isfinite(raw) and 50 <= raw <= 4000) else 'NO RETURN'
+                    readings.append(direction+'='+value)
+                print('ToF | '+' | '.join(readings)+
+                      f" | map radius={state.get('mapping_radius_m', .8):.2f} m | "
+                      f"occupied hits={state['stats']['hits']} | free rays={state['stats'].get('free_rays', 0)}", flush=True)
                 next_status = time.monotonic() + 2
             if ros:
                 if not ros.rclpy.ok():

@@ -42,7 +42,7 @@ class Navigation:
     def __init__(self, goals=(), speed=.1, height=.3, clearance=.25,
                  warning=.5, timeout=30, extent=1.5, coverage_area=None,
                  coverage_spacing=.5, survey_seconds=180, survey_heights=None,
-                 scan_yaw_rate=0):
+                 scan_yaw_rate=0, mapping_radius=.8):
         self.relative_goals = list(goals)
         self.speed, self.height, self.timeout = speed, height, timeout
         self.clearance, self.warning, self.extent = clearance, warning, extent
@@ -55,13 +55,10 @@ class Navigation:
             raise ValueError('Scan rotation must be between 0 and 15 degrees/s')
         self.height_index, self.completed_layers = 0, []
         self.scan_yaw_rate = scan_yaw_rate
-        self.scan_started = self.scan_previous_yaw = self.scan_last_tick = None
-        self.scan_angle = 0.
-        self.next_scan_at = 0.
         self.height_changing, self.transition_started, self.height_settled_at = False, None, None
         self.z_limits = (.15, max(.6, max(self.survey_heights)+.12))
         self.coverage_cache, self.coverage_at = None, None
-        self.mapper = (LayeredMap(self.survey_heights) if coverage_area else
+        self.mapper = (LayeredMap(self.survey_heights, mapping_radius=mapping_radius) if coverage_area else
                        LiveMap(width=100, resolution=.05))
         self.health = LocalizationHealthMonitor(HealthConfig(.4, .25, .3, 1.0))
         self.filter = RangeFilter(RangeFilterConfig(.02, 4, 3, .5))
@@ -171,6 +168,8 @@ class Navigation:
                   'replans': self.replans, 'waypoint_index': 0, 'start': self.origin,
                   'yaw_rate_deg_s': 0., 'survey_heights': list(self.survey_heights),
                   'height_index': self.height_index, 'completed_layers': self.completed_layers}
+        if self.coverage_area:
+            result['mapping_radius_m'] = self.mapper.mapping_radius
         stale = (self.pose_time is None or self.range_time is None or
                  now-self.pose_time > .4 or now-self.range_time > .4)
         if stale:
@@ -242,49 +241,6 @@ class Navigation:
                 'velocity': (0., 0., vz), 'yaw': yaw}, state, scale, pos, self.fence, self.z_limits)
             result['velocity_body'] = safe['velocity'] if safe else (0., 0., 0.)
             return result
-        # A stationary quarter turn sweeps the four rays through 360 degrees.
-        # Freeze the active goal and progress timer during this explicit phase.
-        scan_allowed = (self.coverage_area and self.scan_yaw_rate and self.mission.phase != 'RETURN'
-                        and not self.height_changing and health == 0 and self.fence.contains(pos)
-                        and min(clearances) >= self.warning and ranges.get('up', math.inf) >= .2
-                        and now-self.mission.started < self.mission.budget)
-        if scan_allowed and (self.scan_started is not None or now >= self.next_scan_at):
-            if self.scan_started is None:
-                self.scan_started, self.scan_last_tick = now, now
-                self.scan_previous_yaw, self.scan_angle = yaw, 0.
-            delta = (yaw-self.scan_previous_yaw+math.pi) % (2*math.pi)-math.pi
-            self.scan_angle += delta
-            self.scan_previous_yaw = yaw
-            self.mission.goal_started += max(0., now-self.scan_last_tick)
-            self.scan_last_tick = now
-            completed = self.scan_angle >= math.pi/2-.035
-            timed_out = now-self.scan_started > 2*90/self.scan_yaw_rate+5
-            if completed or timed_out:
-                result['scan_outcome'] = 'completed' if completed else 'angle_timeout'
-                self.scan_started = None
-                self.next_scan_at = now+10
-                self.last_plan, self.no_path_since = None, None
-            else:
-                dt = .05 if self.last_tick is None else min(.1, max(.001, now-self.last_tick))
-                self.last_tick = now
-                velocity = self.output_limiter.apply(dt, (0., 0., 0.))
-                self.limiter.reset(velocity)
-                settling = math.hypot(*self.estimated_velocity) > .04
-                if self.coverage_at is None or now-self.coverage_at >= .5:
-                    self.coverage_cache = self.mission.summary(self.mapper.snapshot(now))
-                    self.coverage_at = now
-                result.update(state='SCAN', reason='scan_settling' if settling else 'scan_quarter_turn',
-                    velocity_body=(math.cos(yaw)*velocity[0]+math.sin(yaw)*velocity[1],
-                                   -math.sin(yaw)*velocity[0]+math.cos(yaw)*velocity[1], 0.),
-                    yaw_rate_deg_s=0. if settling else self.scan_yaw_rate,
-                    scan_progress_deg=round(math.degrees(self.scan_angle),1), workflow='SCAN',
-                    start=self.origin, coverage=self.coverage_cache, path=[],
-                    waypoint_index=self.mission.index)
-                return result
-        elif self.scan_started is not None:
-            self.scan_started = None
-            self.next_scan_at = now+10
-            self.last_plan, self.no_path_since = None, None
         goal = self.mission.current_waypoint if self.mission else None
         route_hit = any(self.mapper.scores[cell] > 0 for p in self.path
                         if (cell := self.mapper.cell(*p[:2])) is not None) if self.path else False
@@ -446,7 +402,9 @@ class Navigation:
             reason='vertical_envelope' if vertical_problem else (reason or avoidance_reason or health_reason),
             path=self.path, replans=self.replans, start=self.origin,
             planner_failure=self.plan_failure,
-            yaw_rate_deg_s=0.,
+            yaw_rate_deg_s=self.scan_yaw_rate if (self.coverage_area and not retreat and
+                state in (0,1) and health == 0 and min(clearances) >= self.clearance and
+                not vertical_problem and self.mission.phase != 'RETURN') else 0.,
             local_target=target,
             workflow='RETREAT' if retreat else ('RETURN' if self.coverage_area and self.mission.phase == 'RETURN' else
                      ('MOVE' if state in (0, 1) else 'HOLD')),

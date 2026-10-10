@@ -2,7 +2,7 @@
 
 Preparación de nuestro equipo para el reto **Autonomous Navigation** de la Mobile Robotics Hackathon 2026, TU Dresden, 10–11 de octubre de 2026.
 
-> **Estado:** preparación inicial. Ya validamos ROS 2 Humble, Crazyswarm2 y una simulación básica `hello_world` con RViz en Ubuntu 22.04 bajo WSL 2. Todavía no está implementado el algoritmo propio de navegación autónoma ni se ha probado con el hardware real del evento.
+> **Estado de esta rama:** trabajo de Persona 3 para CF2 con Flow + Multiranger, sin Lighthouse: navegación local, evasión, barrido con giro simultáneo y mapa 2D en RViz. Las pruebas físicas anteriores validaron hover y reacción a obstáculos; el perfil nuevo y la precisión del mapa todavía requieren evaluación en hardware. [Ejecución y exportación offline para CF1](docs/cf2_coverage_demo.md).
 >
 > **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Completados: TP-01 a TP-10, TP-12 y preparación TP-42 C/E; TP-11 pendiente.
 
