@@ -33,6 +33,9 @@ from hackathon_interfaces.msg import (
 
 from .avoidance import AvoidanceConfig, reactive_correction
 from .follower import (
+    FollowerConfig,
+    RateLimiter,
+    desired_velocity,
     direct_position_setpoint,
     lookahead_point,
     yaw_towards,
@@ -48,6 +51,20 @@ class LocalNavigator(Node):
 
         self._declare_parameters()
         self._read_parameters()
+
+        self.follower_config = FollowerConfig(
+            lookahead_distance=self.lookahead_distance,
+            max_speed=self.max_speed,
+            max_accel=self.max_accel,
+            goal_slowdown_radius=self.goal_slowdown_radius,
+            z_nominal=self.z_nominal,
+        )
+
+        self.rate_limiter = RateLimiter(
+            max_accel=self.max_accel
+        )
+
+        self.last_control_monotonic = None
 
         self.position = None
         self.current_yaw = 0.0
@@ -110,7 +127,7 @@ class LocalNavigator(Node):
         )
 
         self.get_logger().info(
-            'TP-16/30/32/34 local navigator ready: '
+            'TP-16/30/32/33/34 local navigator ready: '
             '/hk/state + /hk/goal + /hk/path/processed + /hk/ranges + '
             '/hk/localization_health -> /hk/cmd/nav'
         )
@@ -122,6 +139,8 @@ class LocalNavigator(Node):
         self.declare_parameter('nominal_speed', 0.3)
         self.declare_parameter('degraded_speed', 0.15)
         self.declare_parameter('max_speed', 0.5)
+        self.declare_parameter('max_accel', 0.5)
+        self.declare_parameter('goal_slowdown_radius', 0.5)
         self.declare_parameter('z_nominal', 0.5)
         self.declare_parameter('goal_timeout', 0.5)
         self.declare_parameter('map_frame', 'map')
@@ -152,6 +171,16 @@ class LocalNavigator(Node):
 
         self.max_speed = float(
             self.get_parameter('max_speed').value
+        )
+
+        self.max_accel = float(
+            self.get_parameter('max_accel').value
+        )
+
+        self.goal_slowdown_radius = float(
+            self.get_parameter(
+                'goal_slowdown_radius'
+            ).value
         )
 
         self.z_nominal = float(
@@ -199,6 +228,14 @@ class LocalNavigator(Node):
 
         if self.max_speed <= 0.0:
             raise ValueError('max_speed must be positive')
+
+        if self.max_accel <= 0.0:
+            raise ValueError('max_accel must be positive')
+
+        if self.goal_slowdown_radius <= 0.0:
+            raise ValueError(
+                'goal_slowdown_radius must be positive'
+            )
 
         if self.goal_timeout <= 0.0:
             raise ValueError('goal_timeout must be positive')
@@ -352,14 +389,14 @@ class LocalNavigator(Node):
         )
 
     def _control_tick(self):
-        """Publish one local-navigation proposal."""
+        """Publish one smoothed local-navigation proposal."""
         if self.position is None:
             return
 
         if self.processed_path_received:
             if not self.processed_path:
-                # An empty processed path means planning failed or no
-                # executable route is currently available.
+                self.rate_limiter.reset()
+                self.last_control_monotonic = None
                 return
 
             navigation_target = lookahead_point(
@@ -368,8 +405,12 @@ class LocalNavigator(Node):
                 lookahead_distance=self.lookahead_distance,
             )
 
+            final_goal = self.processed_path[-1]
+
         else:
             if self.goal is None:
+                self.rate_limiter.reset()
+                self.last_control_monotonic = None
                 return
 
             if self.last_goal_monotonic is None:
@@ -381,9 +422,12 @@ class LocalNavigator(Node):
             )
 
             if goal_age > self.goal_timeout:
+                self.rate_limiter.reset()
+                self.last_control_monotonic = None
                 return
 
             navigation_target = self.goal
+            final_goal = self.goal
 
         active_speed = navigation_speed(
             status=self.localization_status,
@@ -392,35 +436,79 @@ class LocalNavigator(Node):
         )
 
         if active_speed is None:
+            self.rate_limiter.reset()
+            self.last_control_monotonic = None
             return
 
-        speed_scale = (
-            active_speed
-            / self.nominal_speed
+        distance_to_goal = math.hypot(
+            final_goal[0] - self.position[0],
+            final_goal[1] - self.position[1],
         )
 
-        max_step = (
-            self.nominal_speed
-            / self.control_rate
-        )
-
-        follower_target = direct_position_setpoint(
+        requested_velocity = desired_velocity(
             position=self.position,
-            goal=navigation_target,
-            max_step=max_step,
-            z_nominal=self.z_nominal,
+            target=navigation_target,
+            speed_limit=active_speed,
+            distance_to_goal=distance_to_goal,
+            config=self.follower_config,
         )
 
-        vx_map = (
-            follower_target[0]
-            - self.position[0]
-        ) * self.control_rate
+        now = time.monotonic()
 
-        vy_map = (
-            follower_target[1]
-            - self.position[1]
-        ) * self.control_rate
+        if self.last_control_monotonic is None:
+            dt = 1.0 / self.control_rate
+        else:
+            dt = now - self.last_control_monotonic
 
+            if (
+                not math.isfinite(dt)
+                or dt <= 0.0
+            ):
+                dt = 1.0 / self.control_rate
+
+            dt = min(
+                dt,
+                2.0 / self.control_rate,
+            )
+
+        self.last_control_monotonic = now
+
+        limited_velocity = self.rate_limiter.apply(
+            dt=dt,
+            velocity=requested_velocity,
+        )
+
+        vx_map = limited_velocity[0]
+        vy_map = limited_velocity[1]
+
+        # Localization-health speed limits have priority over smoothing.
+        active_horizontal_speed = math.hypot(
+            vx_map,
+            vy_map,
+        )
+
+        if (
+            active_horizontal_speed > active_speed
+            and active_horizontal_speed > 0.0
+        ):
+            scale = (
+                active_speed
+                / active_horizontal_speed
+            )
+
+            vx_map *= scale
+            vy_map *= scale
+
+            self.rate_limiter.reset(
+                (
+                    vx_map,
+                    vy_map,
+                    0.0,
+                )
+            )
+
+        # Reactive avoidance is intentionally applied after smoothing so
+        # obstacle responses are not delayed by the acceleration limiter.
         if self.ranges is not None:
             vx_body, vy_body = self._map_to_body(
                 vx_map,
@@ -444,9 +532,6 @@ class LocalNavigator(Node):
                 corrected_body[1],
                 self.current_yaw,
             )
-
-        vx_map *= speed_scale
-        vy_map *= speed_scale
 
         vx_map, vy_map = self._limit_horizontal_speed(
             vx_map,
@@ -478,7 +563,7 @@ class LocalNavigator(Node):
 
         msg.position.x = float(target_x)
         msg.position.y = float(target_y)
-        msg.position.z = float(follower_target[2])
+        msg.position.z = float(self.z_nominal)
 
         msg.velocity.x = 0.0
         msg.velocity.y = 0.0

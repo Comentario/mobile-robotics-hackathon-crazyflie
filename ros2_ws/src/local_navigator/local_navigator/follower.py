@@ -243,16 +243,209 @@ def desired_velocity(
     distance_to_goal,
     config,
 ):
-    """Reserved for TP-33 velocity shaping and slowdown."""
-    raise NotImplementedError
+    """Return a bounded horizontal velocity toward the navigation target.
+
+    The commanded speed is limited by the active navigation speed and
+    config.max_speed. Close to the final goal, speed decreases linearly
+    inside config.goal_slowdown_radius.
+    """
+    speed_limit = float(speed_limit)
+    distance_to_goal = float(distance_to_goal)
+
+    if (
+        not math.isfinite(speed_limit)
+        or speed_limit <= 0.0
+    ):
+        raise ValueError(
+            'speed_limit must be positive and finite'
+        )
+
+    if (
+        not math.isfinite(distance_to_goal)
+        or distance_to_goal < 0.0
+    ):
+        raise ValueError(
+            'distance_to_goal must be non-negative and finite'
+        )
+
+    if (
+        not math.isfinite(config.max_speed)
+        or config.max_speed <= 0.0
+    ):
+        raise ValueError(
+            'config.max_speed must be positive and finite'
+        )
+
+    if (
+        not math.isfinite(config.goal_slowdown_radius)
+        or config.goal_slowdown_radius <= 0.0
+    ):
+        raise ValueError(
+            'goal_slowdown_radius must be positive and finite'
+        )
+
+    px, py, _ = (
+        float(value)
+        for value in position
+    )
+
+    tx, ty, _ = (
+        float(value)
+        for value in target
+    )
+
+    dx = tx - px
+    dy = ty - py
+
+    distance_to_target = math.hypot(
+        dx,
+        dy,
+    )
+
+    if (
+        distance_to_target == 0.0
+        or distance_to_goal == 0.0
+    ):
+        return (0.0, 0.0, 0.0)
+
+    commanded_speed = min(
+        speed_limit,
+        float(config.max_speed),
+    )
+
+    slowdown_scale = min(
+        1.0,
+        distance_to_goal
+        / float(config.goal_slowdown_radius),
+    )
+
+    commanded_speed *= slowdown_scale
+
+    direction_x = dx / distance_to_target
+    direction_y = dy / distance_to_target
+
+    return (
+        direction_x * commanded_speed,
+        direction_y * commanded_speed,
+        0.0,
+    )
 
 
 class RateLimiter:
-    """Velocity rate limiter reserved for TP-33."""
+    """Limit the rate of change of a velocity vector."""
 
     def __init__(self, max_accel):
-        self.max_accel = max_accel
+        self.max_accel = float(max_accel)
+
+        if (
+            not math.isfinite(self.max_accel)
+            or self.max_accel <= 0.0
+        ):
+            raise ValueError(
+                'max_accel must be positive and finite'
+            )
+
+        self.previous_velocity = None
+
+    def reset(self, velocity=None):
+        """Reset limiter state."""
+        if velocity is None:
+            self.previous_velocity = None
+            return
+
+        velocity = tuple(
+            float(value)
+            for value in velocity
+        )
+
+        if not velocity:
+            raise ValueError(
+                'velocity must not be empty'
+            )
+
+        if not all(
+            math.isfinite(value)
+            for value in velocity
+        ):
+            raise ValueError(
+                'velocity must contain finite values'
+            )
+
+        self.previous_velocity = velocity
 
     def apply(self, dt, velocity):
-        """Apply acceleration limiting in TP-33."""
-        raise NotImplementedError
+        """Limit velocity-vector change to max_accel * dt."""
+        dt = float(dt)
+
+        if not math.isfinite(dt) or dt <= 0.0:
+            raise ValueError(
+                'dt must be positive and finite'
+            )
+
+        velocity = tuple(
+            float(value)
+            for value in velocity
+        )
+
+        if not velocity:
+            raise ValueError(
+                'velocity must not be empty'
+            )
+
+        if not all(
+            math.isfinite(value)
+            for value in velocity
+        ):
+            raise ValueError(
+                'velocity must contain finite values'
+            )
+
+        if self.previous_velocity is None:
+            self.previous_velocity = tuple(
+                0.0
+                for _ in velocity
+            )
+
+        if len(self.previous_velocity) != len(velocity):
+            raise ValueError(
+                'velocity dimension changed'
+            )
+
+        delta = tuple(
+            target - previous
+            for target, previous
+            in zip(
+                velocity,
+                self.previous_velocity,
+            )
+        )
+
+        delta_norm = math.sqrt(
+            sum(
+                value * value
+                for value in delta
+            )
+        )
+
+        max_delta = self.max_accel * dt
+
+        if (
+            delta_norm > max_delta
+            and delta_norm > 0.0
+        ):
+            scale = max_delta / delta_norm
+
+            result = tuple(
+                previous + scale * change
+                for previous, change
+                in zip(
+                    self.previous_velocity,
+                    delta,
+                )
+            )
+        else:
+            result = velocity
+
+        self.previous_velocity = result
+
+        return result
