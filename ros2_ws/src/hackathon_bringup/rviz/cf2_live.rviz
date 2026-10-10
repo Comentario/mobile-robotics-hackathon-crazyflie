@@ -5,25 +5,33 @@ Panels:
     Name: Views
 Visualization Manager:
   Class: ""
+  Enabled: true
+  Name: root
+  Value: true
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
   Global Options:
-    Background Color: 18; 25; 36
+    Background Color: 226; 237; 246
     Fixed Frame: cf2_display
     Frame Rate: 30
   Displays:
     - Class: rviz_default_plugins/Grid
       Name: Metric grid - 0.5 m
-      Enabled: true
+      Enabled: false
+      Value: false
       Cell Size: 0.5
       Plane Cell Count: 20
-      Color: 58; 73; 91
-      Alpha: 0.4
+      Color: 138; 153; 174
+      Alpha: 0.18
       Line Style:
         Value: Lines
         Line Width: 0.01
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/Map
-      Name: Observed space
-      Enabled: true
+      Name: Occupancy texture - optional
+      Enabled: false
+      Value: false
       Alpha: 0.55
       Color Scheme: map
       Draw Behind: true
@@ -35,10 +43,11 @@ Visualization Manager:
     - Class: rviz_default_plugins/Path
       Name: Flight trajectory
       Enabled: true
-      Color: 44; 203; 230
+      Value: true
+      Color: 0; 142; 190
       Alpha: 1
       Line Style: Billboards
-      Line Width: 0.025
+      Line Width: 0.018
       Pose Style: None
       Buffer Length: 1
       Topic:
@@ -47,9 +56,10 @@ Visualization Manager:
         Reliability Policy: Reliable
         Durability Policy: Volatile
     - Class: rviz_default_plugins/Path
-      Name: Planned route
+      Name: Local planned route
       Enabled: true
-      Color: 183; 114; 250
+      Value: true
+      Color: 155; 68; 210
       Alpha: 0.85
       Line Style: Billboards
       Line Width: 0.02
@@ -61,8 +71,9 @@ Visualization Manager:
         Reliability Policy: Reliable
         Durability Policy: Volatile
     - Class: rviz_default_plugins/MarkerArray
-      Name: Robot - origin - ToF - observations
+      Name: Map - robot - scan - ToF
       Enabled: true
+      Value: true
       Topic:
         Value: /cf2/presentation/markers
         Depth: 10
@@ -70,11 +81,17 @@ Visualization Manager:
         Durability Policy: Volatile
   Views:
     Current:
-      Class: rviz_default_plugins/TopDownOrtho
+      Class: rviz_default_plugins/Orbit
+      Value: Orbit (rviz)
+      Distance: 7.3
+      Pitch: 1.5707
+      Yaw: -1.570796
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
       Name: Top-down live map
       Target Frame: <Fixed Frame>
-      Angle: 0
-      Scale: 160
       X: 0
       Y: 0
       Near Clip Distance: 0.01

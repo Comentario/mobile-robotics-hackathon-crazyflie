@@ -77,6 +77,30 @@ class LiveMappingTests(unittest.TestCase):
         self.assertEqual(m.snapshot(now=5)['data'][m.cell(.5, 0)], 0)
         self.assertTrue(all(v == -1 for v in m.snapshot(now=26)['data']))
 
+    def test_confirmed_survey_obstacle_survives_until_contradicted(self):
+        m = LiveMap(decay_seconds=600, persistent_seconds=600)
+        m.update(pose(), now=1)
+        for now in [1, 1.2, 1.4, 1.7]:
+            m.update(ranges(front=500), now=now)
+        cell = m.cell(.5, 0)
+        self.assertEqual(m.snapshot(now=1.7)['presentation_data'][cell], 100)
+        self.assertEqual(m.snapshot(now=90)['presentation_data'][cell], 100)
+        for now in [91, 91.2, 91.4, 91.6, 91.8, 92, 92.2]:
+            m.update(ranges(front=1000), now=now)
+        self.assertEqual(m.snapshot(now=92.2)['presentation_data'][cell], 0)
+
+    def test_display_home_matches_navigation_without_moving_observations(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        before = m.snapshot(now=1)
+        m.update({'log': 'cf2_navigation', 'session_id': 'one',
+                  'data': {'start': [.02, -.01]}}, now=1.1)
+        after = m.snapshot(now=1.1)
+        self.assertEqual(after['start'], (.02, -.01))
+        self.assertEqual(after['origin'], before['origin'])
+        self.assertEqual(after['data'], before['data'])
+
 
 if __name__ == '__main__':
     unittest.main()

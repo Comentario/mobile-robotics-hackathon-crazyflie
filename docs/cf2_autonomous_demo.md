@@ -1,6 +1,7 @@
 # CF2: onboard sensing, local navigation and return
 
 For the presentation use [RViz live perception](cf2_rviz_presentation.md).
+For horizontal coverage and live replanning use [the 5 × 3 m survey](cf2_coverage_demo.md).
 
 Track 1: [Autonomous Navigation](https://mobile-robotics.eu/) requires
 waypoint navigation with onboard perception, localization, planning and

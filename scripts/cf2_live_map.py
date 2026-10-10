@@ -17,10 +17,12 @@ from cf2_build_map import ANGLES, ray_endpoint
 
 class LiveMap:
     def __init__(self, resolution=0.05, width=160, min_height=0.2, max_height=0.4,
-                 decay_seconds=120):
+                 decay_seconds=120, persistent_seconds=5, retain_observations=False):
         self.resolution, self.width = resolution, width
         self.min_height, self.max_height = min_height, max_height
         self.decay_seconds = decay_seconds
+        self.persistent_seconds = persistent_seconds
+        self.retain_observations = retain_observations
         self.lock = Lock()
         self.reset('waiting')
 
@@ -30,12 +32,13 @@ class LiveMap:
         self.scores = [0] * self.width ** 2
         self.updated = [None] * self.width ** 2
         self.poses = deque(maxlen=20)
-        self.trail = deque(maxlen=2000)
+        self.trail = []
         self.pose, self.ranges = None, {}
         self.start, self.navigation = None, None
         self.last_received = None
         self.last_pose_at = self.last_ranges_at = None
         self.hit_history = {}
+        self.confirmed_at = {}
         self.recent_hits = deque(maxlen=400)
         self.stats = {'hits': 0, 'invalid_ranges': 0, 'unpaired': 0,
                       'outside_map': 0, 'mapped_samples': 0}
@@ -57,6 +60,12 @@ class LiveMap:
             name, data = row.get('log'), row.get('data', {})
             if name == 'cf2_navigation':
                 self.navigation = dict(data)
+                reference = data.get('start')
+                if (isinstance(reference, (list, tuple)) and len(reference) == 2 and
+                        all(isinstance(v, (int, float)) and math.isfinite(v) for v in reference)):
+                    # Display exactly the controller's home reference. The grid
+                    # remains in the same EKF coordinates; no observations move.
+                    self.start = tuple(reference)
                 return
             if name == 'cf2_pose':
                 keys = ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
@@ -108,23 +117,27 @@ class LiveMap:
                         free.add(cell)
                 for cell, delta in [(cell, -1) for cell in free] + [(target, 3)]:
                     previous = self.updated[cell]
-                    if previous is None or now - previous > self.decay_seconds:
+                    if previous is None or (not self.retain_observations and now - previous > self.decay_seconds):
                         self.scores[cell] = 0
+                        self.confirmed_at.pop(cell, None)
                     self.scores[cell] = max(-4, min(6, self.scores[cell] + delta))
                     self.updated[cell] = now
                     if cell in free and self.scores[cell] <= 0:
                         self.hit_history.pop(cell, None)
+                        self.confirmed_at.pop(cell, None)
                 history = self.hit_history.setdefault(target, deque(maxlen=32))
                 if history and now-history[-1] > 1:
                     history.clear()
                 history.append(now)
+                if len(history) >= 4 and history[-1]-history[0] >= .6:
+                    self.confirmed_at[target] = now
                 self.recent_hits.append((now, *end))
                 self.stats['hits'] += 1
 
     def snapshot(self, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:
-            grid = [-1 if stamp is None or now - stamp > self.decay_seconds
+            grid = [-1 if stamp is None or (not self.retain_observations and now - stamp > self.decay_seconds)
                     else (100 if self.scores[i] > 0 else 0)
                     for i, stamp in enumerate(self.updated)]
             # Presentation layer only: repeated observations, never synthetic walls.
@@ -132,7 +145,11 @@ class LiveMap:
             for i, value in enumerate(grid):
                 history = self.hit_history.get(i)
                 confirmed = bool(history and len(history) >= 4 and
-                                 history[-1]-history[0] >= .6 and now-history[-1] <= 5)
+                                 history[-1]-history[0] >= .6 and now-history[-1] <= 1)
+                if confirmed:
+                    self.confirmed_at[i] = history[-1]
+                confirmed = (i in self.confirmed_at and
+                             (self.retain_observations or now-self.confirmed_at[i] <= self.persistent_seconds))
                 persistent.append(100 if value == 100 and confirmed else (-1 if value == 100 else value))
             while self.recent_hits and now-self.recent_hits[0][0] > 1.2:
                 self.recent_hits.popleft()
@@ -146,7 +163,7 @@ class LiveMap:
                     'stats': dict(self.stats), 'age_seconds': None if
                     self.last_pose_at is None or self.last_ranges_at is None else
                     max(now-self.last_pose_at, now-self.last_ranges_at),
-                    'decay_seconds': self.decay_seconds}
+                    'decay_seconds': None if self.retain_observations else self.decay_seconds}
 
 
 class RosPublisher:
@@ -220,7 +237,7 @@ class RosPublisher:
 
     def close(self):
         self.node.destroy_node()
-        self.rclpy.shutdown()
+        self.rclpy.try_shutdown()
 
 
 def main():
@@ -228,13 +245,26 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--udp-port', type=int, default=8766)
     parser.add_argument('--ros', action='store_true', help='Publish /cf2/map and /cf2/odom')
-    parser.add_argument('--decay-seconds', type=float, default=120,
-                        help='Observation lifetime in seconds (default 120)')
+    parser.add_argument('--decay-seconds', type=float, default=600,
+                        help='Observation lifetime in seconds (default 600)')
+    parser.add_argument('--persistent-seconds', type=float, default=600,
+                        help='Confirmed returns remain until contradicted or this lifetime expires')
+    parser.add_argument('--heights', type=float, nargs='+', default=[.3],
+                        help='Initial discrete height layers; live mission metadata updates this list')
+    parser.add_argument('--expire-observations', action='store_true',
+                        help='Opt into legacy expiry; default preserves measured layers for the session')
     parser.add_argument('--replay', type=Path, help='Replay a recording for software verification; no flight')
     args = parser.parse_args()
     if not math.isfinite(args.decay_seconds) or args.decay_seconds <= 0:
         parser.error('--decay-seconds must be finite and positive')
-    mapper, done = LiveMap(decay_seconds=args.decay_seconds), Event()
+    if not math.isfinite(args.persistent_seconds) or args.persistent_seconds <= 0:
+        parser.error('--persistent-seconds must be finite and positive')
+    from cf2_layers import LayeredMap
+    try:
+        mapper, done = LayeredMap(args.heights, decay_seconds=args.decay_seconds,
+            persistent_seconds=args.persistent_seconds, retain_observations=not args.expire_observations), Event()
+    except ValueError as error:
+        parser.error(str(error))
     page = Path(__file__).with_name('cf2_live_map.html').read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
@@ -300,10 +330,28 @@ def main():
     Thread(target=server.serve_forever, daemon=True).start()
     Thread(target=replay if args.replay else receive, daemon=True).start()
     print(f'Live map: http://localhost:{args.port} | UDP 127.0.0.1:{args.udp_port}', flush=True)
+    mode = 'REPLAY' if args.replay else 'LIVE'
+    print(f'{mode} input. ' + ('Recorded data only.' if args.replay else
+          'Waiting for flight telemetry: use --live-map on the flight command.'), flush=True)
+    next_status = 0
     try:
         while not done.wait(0.1 if ros else 0.2):
+            state = mapper.snapshot()
+            if time.monotonic() >= next_status:
+                age = state['age_seconds']
+                status = 'WAITING FOR TELEMETRY' if age is None else (
+                    'LIVE' if age <= 1 else 'STALE DATA')
+                position = state['pose'] or {}
+                print(f"{mode} | {status} | session={state['session_id']} | "
+                      f"XY=({position.get('stateEstimate.x')}, {position.get('stateEstimate.y')}) | "
+                      f"Z={position.get('stateEstimate.z')} | levels={state.get('survey_heights', [])} | "
+                      f"workflow={(state.get('navigation') or {}).get('workflow', 'WAITING')} | "
+                      f"mapped={state['stats']['mapped_samples']} | trail={len(state['trail'])}", flush=True)
+                next_status = time.monotonic() + 2
             if ros:
-                ros.publish(mapper.snapshot())
+                if not ros.rclpy.ok():
+                    break
+                ros.publish(state)
     except KeyboardInterrupt:
         pass
     finally:

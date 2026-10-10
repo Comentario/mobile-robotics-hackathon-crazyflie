@@ -1,4 +1,4 @@
-"""Read telemetry, or explicitly request a short Flow-deck hover.
+"""Read telemetry, or explicitly fly a Flow/Multiranger hover or online survey.
 
 Uses Bitcraze's SyncCrazyflie, LogConfig and MotionCommander APIs.
 No commands are sent to the motors without --fly.
@@ -53,8 +53,8 @@ def main():
     parser.add_argument('--navigate', action='store_true',
                         help='Closed-loop TP navigation/avoidance; without a route, reactive hover')
     parser.add_argument('--speed', type=float, default=0.1)
-    parser.add_argument('--warning-distance', type=float, default=0.8,
-                        help='Start reacting at this distance in metres (default 0.8)')
+    parser.add_argument('--warning-distance', type=float, default=0.5,
+                        help='Start reacting at this distance in metres (default 0.5)')
     parser.add_argument('--waypoint-timeout', type=float, default=30)
     parser.add_argument('--return-home', action='store_true',
                         help='Append start (0,0) as the last closed-loop waypoint')
@@ -74,6 +74,15 @@ def main():
                         help='Fly one square: forward, left, back, right; side in metres')
     parser.add_argument('--rectangle', type=float, nargs=2, metavar=('FORWARD_M', 'LEFT_M'),
                         help='Fly one rectangle: forward, left, back, right; lengths in metres')
+    parser.add_argument('--coverage-area', type=float, nargs=2, metavar=('WIDTH_M', 'LENGTH_M'),
+                        help='Online serpentine survey centered on takeoff, with A* replanning and return')
+    parser.add_argument('--coverage-spacing', type=float, default=.5)
+    parser.add_argument('--survey-seconds', type=float, default=180,
+                        help='Survey budget before returning home; return has its own waypoint timeout')
+    parser.add_argument('--survey-heights', type=float, nargs='+', metavar='Z_M',
+                        help='Discrete increasing height layers; first must match --height')
+    parser.add_argument('--scan-yaw-rate', type=float, default=0,
+                        help='In-place 90-degree scans between movement intervals, degrees/s (0 disables, maximum 15)')
     parser.add_argument('--live-map', action='store_true',
                         help='Stream telemetry to the local live map via UDP')
     parser.add_argument('--map-port', type=int, default=8766)
@@ -84,11 +93,32 @@ def main():
     parser.add_argument('--record', type=Path,
                         help='Create a new JSONL telemetry file; never overwrite')
     args = parser.parse_args()
+    if args.survey_heights:
+        from cf2_layers import validate_heights
+        try:
+            args.survey_heights = validate_heights(args.survey_heights)
+        except ValueError as error:
+            parser.error(str(error))
+        if not args.coverage_area or not math.isclose(args.height, args.survey_heights[0]):
+            parser.error('--survey-heights requires --coverage-area and its first height must match --height')
+    if not math.isfinite(args.scan_yaw_rate) or not 0 <= args.scan_yaw_rate <= 15:
+        parser.error('--scan-yaw-rate must be between 0 and 15 degrees/s')
+    if args.scan_yaw_rate and not args.coverage_area:
+        parser.error('--scan-yaw-rate requires --coverage-area')
+    if args.coverage_area:
+        if not args.navigate or args.forward or args.square_side or args.rectangle or args.return_home:
+            parser.error('--coverage-area requires --fly --navigate and cannot be combined with other routes')
+        if not all(math.isfinite(v) and 1 <= v <= 6 for v in args.coverage_area):
+            parser.error('--coverage-area dimensions must be between 1 and 6 metres')
+    if not math.isfinite(args.coverage_spacing) or not .2 <= args.coverage_spacing <= .8:
+        parser.error('--coverage-spacing must be between 0.2 and 0.8 metres')
+    if not math.isfinite(args.survey_seconds) or not 10 <= args.survey_seconds <= 900:
+        parser.error('--survey-seconds must be between 10 and 900 seconds; budget includes all height levels')
     if args.navigate and not args.fly:
         parser.error('--navigate requires --fly')
     if args.return_home and (not args.navigate or not (args.forward or args.square_side or args.rectangle)):
         parser.error('--return-home requires --navigate and a route')
-    if args.navigate and not .2 <= args.height <= .4:
+    if args.navigate and not args.survey_heights and not .2 <= args.height <= .4:
         parser.error('--navigate mapping height must be between 0.2 and 0.4 m')
     if not math.isfinite(args.speed) or not 0 < args.speed <= .2:
         parser.error('--speed must be between 0 and 0.2 m/s')
@@ -131,7 +161,10 @@ def main():
         if any(abs(v) > 1.25 for goal in goals for v in goal):
             parser.error('Navigation goals must stay within 1.25 m of start')
         nav = Navigation(goals, speed=args.speed, height=args.height, warning=args.warning_distance,
-                         timeout=args.waypoint_timeout if goals else args.hover_seconds)
+                         timeout=args.waypoint_timeout if goals or args.coverage_area else args.hover_seconds,
+                         coverage_area=args.coverage_area, coverage_spacing=args.coverage_spacing,
+                         survey_seconds=args.survey_seconds, survey_heights=args.survey_heights,
+                         scan_yaw_rate=args.scan_yaw_rate)
     session_id = uuid4().hex[:12]
     if args.fly:
         args.flow_diagnostics = True
@@ -160,6 +193,11 @@ def main():
                 'square_side_metres': args.square_side, 'rectangle_metres': args.rectangle,
                 'navigation_enabled': args.navigate, 'speed': args.speed,
                 'warning_distance': args.warning_distance,
+                'coverage_area_metres': args.coverage_area,
+                'coverage_spacing_metres': args.coverage_spacing,
+                'survey_seconds': args.survey_seconds,
+                'survey_heights': args.survey_heights or [args.height],
+                'scan_yaw_rate_deg_s': args.scan_yaw_rate,
                 'return_home': args.return_home,
                 'session_id': session_id}}) + '\n')
         scf = stack.enter_context(SyncCrazyflie(args.uri, cf=Crazyflie(rw_cache=str(cache))))
@@ -259,8 +297,9 @@ def main():
             if not all(event.wait(5) for event in events):
                 raise RuntimeError('Missing pose/range telemetry; no takeoff')
             if args.fly:
-                print(f'Takeoff to {args.height} m, hover for '
-                      f'{args.hover_seconds} seconds, then land.', flush=True)
+                print((f'Takeoff to {args.height} m; survey {args.coverage_area} m, then return and land.'
+                       if args.coverage_area else f'Takeoff to {args.height} m, hover for '
+                       f'{args.hover_seconds} seconds, then land.'), flush=True)
                 scf.cf.supervisor.send_arming_request(True)
                 time.sleep(1)
                 try:
@@ -303,12 +342,29 @@ def main():
                                         print(f'Map snapshot: {map_file}', flush=True)
                                         print('NAV LAND: ' + decision['reason'], flush=True)
                                         break
-                                    motion.start_linear_motion(*decision['velocity_body'])
+                                    phase['name'] = ('height_change' if decision['state'] == 'CHANGE_HEIGHT'
+                                                     else 'navigation')
+                                    motion.start_linear_motion(*decision['velocity_body'],
+                                                              rate_yaw=decision.get('yaw_rate_deg_s', 0.))
                                     if now-last_report >= .5:
                                         last_report = now
                                         print(f"NAV: {decision['state']} | {decision['reason']} | "
                                               f"body velocity={decision['velocity_body']} | "
                                               f"waypoint={decision['waypoint_index']} | replans={decision['replans']}", flush=True)
+                                        if decision['state'] == 'SCAN':
+                                            print(f"SCAN: {decision.get('scan_progress_deg', 0)} / 90 deg | target frozen | mapping active", flush=True)
+                                        if decision.get('scan_outcome'):
+                                            print(f"SCAN END: {decision['scan_outcome']}", flush=True)
+                                        if decision.get('local_target'):
+                                            target = decision['local_target']
+                                            print(f"{decision.get('workflow', 'MOVE')}: local target XY="
+                                                  f"({target[0]-nav.origin[0]:+.2f}, {target[1]-nav.origin[1]:+.2f}) m | mapping active", flush=True)
+                                        if decision.get('coverage'):
+                                            coverage = decision['coverage']
+                                            print(f"SURVEY: {coverage['phase']} | observed={coverage['observed_percent']}% | "
+                                                  f"Z={nav.height:.2f} m | level={nav.height_index+1}/{len(nav.survey_heights)} | "
+                                                  f"visited={len(coverage['visited'])}/{len(coverage['targets'])} | "
+                                                  f"deferred={coverage['deferred_count']} | unresolved={len(coverage['unresolved'])}", flush=True)
                                         row = json.dumps({'log': 'cf2_navigation', 'data': decision,
                                                           'session_id': session_id})
                                         if live_socket:
