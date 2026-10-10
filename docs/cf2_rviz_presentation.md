@@ -149,3 +149,11 @@ uses a local 0.80 m radius and valid measurements only. Red X / pending target
 markers are removed from the scene, while their diagnostics remain recorded.
 The exporter writes a cropped conservative PGM/YAML pair plus a handoff JSON
 for offline exchange with CF1. Shared coordinates still need measured alignment.
+
+## Adaptive coverage status
+
+The live launcher opens an English Qt status window beside RViz. It shows
+measured observed percentage, EXPLORE/INSPECT/RETURN phase and stop trigger.
+This avoids distorted RViz billboard text. The map, actual trajectory and
+current sensor rays remain live ROS displays in RViz. The flight guide
+`cf2_coverage_demo.md` documents the one-height adaptive profile.

@@ -45,6 +45,7 @@ class LiveMap:
         self.hit_history = {}
         self.confirmed_at = {}
         self.recent_hits = deque(maxlen=400)
+        self.recent_observations = deque(maxlen=400)
         self.stats = {'hits': 0, 'invalid_ranges': 0, 'unpaired': 0,
                       'outside_map': 0, 'mapped_samples': 0, 'free_rays': 0}
 
@@ -152,6 +153,7 @@ class LiveMap:
                 if len(history) >= 4 and history[-1]-history[0] >= .6:
                     self.confirmed_at[target] = now
                 self.recent_hits.append((now, *end))
+                self.recent_observations.append({'time': now, 'endpoint': end, 'observer': start})
                 self.stats['hits'] += 1
 
     def snapshot(self, now=None):
@@ -173,7 +175,9 @@ class LiveMap:
                 persistent.append(100 if value == 100 and confirmed else (-1 if value == 100 else value))
             while self.recent_hits and now-self.recent_hits[0][0] > 1.2:
                 self.recent_hits.popleft()
-            return {'session_id': self.session, 'frame': f'cf2_local_{self.session}',
+            while self.recent_observations and now-self.recent_observations[0]['time'] > 1.2:
+                self.recent_observations.popleft()
+            return {'recent_observations': list(self.recent_observations), 'session_id': self.session, 'frame': f'cf2_local_{self.session}',
                     'resolution': self.resolution, 'width': self.width, 'height': self.width,
                     'origin': self.origin, 'data': grid, 'pose': self.pose,
                     'presentation_data': persistent,
@@ -264,6 +268,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--udp-port', type=int, default=8766)
+    parser.add_argument('--status-panel', action='store_true', help='Open English live coverage dashboard')
     parser.add_argument('--ros', action='store_true', help='Publish /cf2/map and /cf2/odom')
     parser.add_argument('--decay-seconds', type=float, default=600,
                         help='Observation lifetime in seconds (default 600)')
@@ -353,10 +358,16 @@ def main():
     mode = 'REPLAY' if args.replay else 'LIVE'
     print(f'{mode} input. ' + ('Recorded data only.' if args.replay else
           'Waiting for flight telemetry: use --live-map on the flight command.'), flush=True)
+    panel = None
+    if args.status_panel:
+        from cf2_status_panel import StatusPanel
+        panel = StatusPanel()
     next_status = 0
     try:
         while not done.wait(0.1 if ros else 0.2):
             state = mapper.snapshot()
+            if panel:
+                panel.update(state)
             if time.monotonic() >= next_status:
                 age = state['age_seconds']
                 status = 'WAITING FOR TELEMETRY' if age is None else (

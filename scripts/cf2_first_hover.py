@@ -75,7 +75,11 @@ def main():
     parser.add_argument('--rectangle', type=float, nargs=2, metavar=('FORWARD_M', 'LEFT_M'),
                         help='Fly one rectangle: forward, left, back, right; lengths in metres')
     parser.add_argument('--coverage-area', type=float, nargs=2, metavar=('WIDTH_M', 'LENGTH_M'),
-                        help='Online serpentine survey centered on takeoff, with A* replanning and return')
+                        help='Online mapping centered on takeoff, with A* replanning and return')
+    parser.add_argument('--coverage-mode', choices=('explore', 'survey'), default='explore')
+    parser.add_argument('--coverage-target', type=float, default=80)
+    parser.add_argument('--no-progress-seconds', type=float, default=45)
+    parser.add_argument('--inspect-obstacles', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--coverage-spacing', type=float, default=.5)
     parser.add_argument('--survey-seconds', type=float, default=180,
                         help='Survey budget before returning home; return has its own waypoint timeout')
@@ -95,6 +99,12 @@ def main():
     parser.add_argument('--record', type=Path,
                         help='Create a new JSONL telemetry file; never overwrite')
     args = parser.parse_args()
+    if not math.isfinite(args.coverage_target) or not 1 <= args.coverage_target <= 99:
+        parser.error('Coverage target must be between 1 and 99 percent')
+    if not math.isfinite(args.no_progress_seconds) or args.no_progress_seconds < 5:
+        parser.error('No-progress timeout must be at least 5 seconds')
+    if args.coverage_mode == 'explore' and args.survey_heights and len(args.survey_heights) != 1:
+        parser.error('Adaptive exploration currently uses one height')
     if args.survey_heights:
         from cf2_layers import validate_heights
         try:
@@ -168,7 +178,9 @@ def main():
                          timeout=args.waypoint_timeout if goals or args.coverage_area else args.hover_seconds,
                          coverage_area=args.coverage_area, coverage_spacing=args.coverage_spacing,
                          survey_seconds=args.survey_seconds, survey_heights=args.survey_heights,
-                         scan_yaw_rate=args.scan_yaw_rate, mapping_radius=args.mapping_radius)
+                         scan_yaw_rate=args.scan_yaw_rate, mapping_radius=args.mapping_radius,
+                         coverage_mode=args.coverage_mode, coverage_target=args.coverage_target,
+                         no_progress_seconds=args.no_progress_seconds, inspect_obstacles=args.inspect_obstacles)
     session_id = uuid4().hex[:12]
     if args.fly:
         args.flow_diagnostics = True
@@ -199,6 +211,9 @@ def main():
                 'warning_distance': args.warning_distance,
                 'coverage_area_metres': args.coverage_area,
                 'coverage_spacing_metres': args.coverage_spacing,
+                'coverage_mode': args.coverage_mode, 'coverage_target_percent': args.coverage_target,
+                'no_progress_seconds': args.no_progress_seconds,
+                'inspect_obstacles': args.inspect_obstacles,
                 'survey_seconds': args.survey_seconds,
                 'survey_heights': args.survey_heights or [args.height],
                 'scan_yaw_rate_deg_s': args.scan_yaw_rate,

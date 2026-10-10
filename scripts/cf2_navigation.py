@@ -25,6 +25,7 @@ from safety_supervisor.supervisor import (SafetySupervisor, SupervisorConfig, Sa
 from safety_supervisor.geofence import Geofence
 from cf2_live_map import LiveMap
 from cf2_coverage import CoverageMission
+from cf2_exploration import ExplorationMission
 from cf2_layers import LayeredMap, validate_heights
 
 
@@ -42,7 +43,16 @@ class Navigation:
     def __init__(self, goals=(), speed=.1, height=.3, clearance=.25,
                  warning=.5, timeout=30, extent=1.5, coverage_area=None,
                  coverage_spacing=.5, survey_seconds=180, survey_heights=None,
-                 scan_yaw_rate=0, mapping_radius=.8):
+                 scan_yaw_rate=0, mapping_radius=.8, coverage_mode='survey',
+                 coverage_target=80, no_progress_seconds=45, inspect_obstacles=True):
+        if coverage_mode not in ('survey', 'explore'):
+            raise ValueError('Unknown coverage mode')
+        self.coverage_mode = coverage_mode if coverage_area else 'survey'
+        self.exploration_options = dict(target_percent=coverage_target,
+            no_progress_seconds=no_progress_seconds, inspect=inspect_obstacles,
+            clearance=clearance, warning=warning, mapping_radius=mapping_radius)
+        if coverage_mode == 'explore' and len(survey_heights or (height,)) != 1:
+            raise ValueError('Adaptive exploration currently uses one height')
         self.relative_goals = list(goals)
         self.speed, self.height, self.timeout = speed, height, timeout
         self.clearance, self.warning, self.extent = clearance, warning, extent
@@ -112,11 +122,20 @@ class Navigation:
             self.mission = CoverageMission(self.origin, self.coverage_area, self.height,
                 self.coverage_spacing, min(self.warning+.1, min(self.coverage_area)/2-.2),
                 self.timeout, self.survey_seconds/len(self.survey_heights))
+            if self.coverage_mode == 'explore':
+                self.mission = ExplorationMission(self.origin, self.coverage_area, self.height,
+                    timeout=self.timeout, budget=self.survey_seconds, **self.exploration_options)
             self.mission.start(now)
         elif self.relative_goals:
             goals = [Waypoint(x+dx, y+dy, self.height) for dx, dy in self.relative_goals]
             self.mission = MissionStateMachine(goals, .08, self.timeout, self.height)
             self.mission.start(now)
+
+    def _refresh_exploration(self, now, position, force=False):
+        mission = self.mission
+        if (isinstance(mission, ExplorationMission) and mission.phase != 'RETURN' and
+                (force or mission.last_refresh is None or now-mission.last_refresh >= .5)):
+            mission.refresh(now, position, self.mapper.snapshot(now), force=force)
 
     def _plan(self, position, goal, now):
         s = (self.mapper.planning_snapshot(now) if self.coverage_area else self.mapper.snapshot(now))
@@ -140,7 +159,8 @@ class Navigation:
                 wx, wy = cell_to_world((x, y), ox, oy, res)
                 if not self.fence.contains((wx, wy, self.height)):
                     row[x] = 100
-        cost = build_cost_map(inflated, 'penalize', 3, 0)
+        cost = build_cost_map(inflated,
+            'block' if self.coverage_mode == 'explore' and self.mission.phase == 'INSPECT' else 'penalize', 3, 0)
         self.replans += 1
         start = world_to_cell(*position[:2], ox, oy, res, w, w)
         end = world_to_cell(goal.x, goal.y, ox, oy, res, w, w)
@@ -150,16 +170,52 @@ class Navigation:
         if math.isinf(cost[end[1]][end[0]]):
             self.plan_failure = 'goal_inside_obstacle_margin'
             return []
+        escape = None
         if math.isinf(cost[start[1]][start[0]]):
-            self.plan_failure = 'start_inside_obstacle_margin'
-            return []
+            # Grid quantization may place a physically free start in the inflated
+            # margin. Permit only a short, monotonically outward escape; never
+            # cross raw occupied cells or relax the remaining planned route.
+            occupied = [cell_to_world((x,y), ox, oy, res)
+                        for y,row in enumerate(grid) for x,v in enumerate(row) if v>=50]
+            def clearance_at(point):
+                return min((math.dist(point,p) for p in occupied), default=math.inf)
+            initial = clearance_at(position[:2])
+            candidates = []
+            if self.coverage_mode == 'explore' and grid[start[1]][start[0]] < 50 and initial >= self.clearance-res*.75:
+                reach = math.ceil(.2/res)
+                for dy in range(-reach,reach+1):
+                    for dx in range(-reach,reach+1):
+                        cx,cy=start[0]+dx,start[1]+dy
+                        if not (0<=cx<w and 0<=cy<w) or math.isinf(cost[cy][cx]):continue
+                        point=cell_to_world((cx,cy),ox,oy,res)
+                        distance=math.dist(position[:2],point)
+                        if not 0<distance<=.2:continue
+                        previous=initial;valid=True
+                        steps=max(1,math.ceil(distance/(res/2)))
+                        for step in range(1,steps+1):
+                            q=tuple(position[i]+(point[i]-position[i])*step/steps for i in (0,1))
+                            c=world_to_cell(*q,ox,oy,res,w,w)
+                            separation=clearance_at(q)
+                            if (c is None or grid[c[1]][c[0]]>=50 or separation<previous-1e-6 or
+                                (self.mission.phase=='INSPECT' and grid[c[1]][c[0]]!=0)):
+                                valid=False;break
+                            previous=separation
+                        if valid:candidates.append((distance,(cx,cy),point))
+            if not candidates:
+                self.plan_failure = 'start_inside_obstacle_margin'
+                return []
+            _,start,escape=min(candidates,key=lambda item:item[0])
         cells = astar(cost, start, end, timeout=.08 if self.coverage_area else .04) if start and end else None
         if not cells:
             self.plan_failure = 'planner_search_unresolved'
             return []
         self.plan_failure = ''
         points = [(*cell_to_world(c, ox, oy, res), self.height) for c in cells]
-        points[0], points[-1] = position, (goal.x, goal.y, goal.z)
+        if escape is not None:
+            points.insert(0,position)
+        else:
+            points[0] = position
+        points[-1] = (goal.x, goal.y, goal.z)
         return densify(remove_collinear(points), .15)
 
     def tick(self, now):
@@ -241,6 +297,7 @@ class Navigation:
                 'velocity': (0., 0., vz), 'yaw': yaw}, state, scale, pos, self.fence, self.z_limits)
             result['velocity_body'] = safe['velocity'] if safe else (0., 0., 0.)
             return result
+        self._refresh_exploration(now, pos)
         goal = self.mission.current_waypoint if self.mission else None
         route_hit = any(self.mapper.scores[cell] > 0 for p in self.path
                         if (cell := self.mapper.cell(*p[:2])) is not None) if self.path else False
@@ -256,6 +313,8 @@ class Navigation:
         if self.mission:
             # Planner availability is enforced by supervisor; TP-26 owns lifecycle.
             self.mission.step(now, pos, health, state, 0)
+            if isinstance(self.mission, ExplorationMission) and goal and self.mission.active is None:
+                self._refresh_exploration(now, pos, force=True)
             if self.coverage_area and self.mission.phase == 'RETURN' and not self.mission.repair_used:
                 self.mission.prepare_repair(pos, now, self.mapper.snapshot(now))
             result['waypoint_index'] = self.mission.index

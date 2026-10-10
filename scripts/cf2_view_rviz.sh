@@ -20,7 +20,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-.venv-cf2/bin/python scripts/cf2_live_map.py --ros "$@" &
+.venv-cf2/bin/python scripts/cf2_live_map.py --ros --status-panel "$@" &
 CF2_VIEW_PID=$!
 sleep 1
 if ! kill -0 "$CF2_VIEW_PID" 2>/dev/null; then

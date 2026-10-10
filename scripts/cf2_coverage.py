@@ -167,6 +167,6 @@ class CoverageMission:
                 'active_target': self.active, 'unresolved': self.unresolved,
                 'deferred_count': len(self.deferred),
                 'observed_percent': round(100*observed/total, 1) if total else 0.,
-                'unknown_cells': total-observed,
+                'observed_cells': observed, 'unknown_cells': total-observed,
                 'occupied_cells': occupied, 'survey_budget_seconds': self.budget,
                 'proof_of_impossibility': False}

@@ -30,7 +30,8 @@ cd ~/hackathon/mobile-robotics-hackathon-crazyflie
   --height 0.3 --survey-heights 0.3 \
   --speed 0.15 --warning-distance 0.5 \
   --mapping-radius 0.8 --scan-yaw-rate 12 \
-  --coverage-area 5 3 --coverage-spacing 0.5 \
+  --coverage-area 5 3 --coverage-mode explore \
+  --coverage-target 80 --no-progress-seconds 45 \
   --survey-seconds 180 --waypoint-timeout 30
 ```
 
@@ -43,24 +44,39 @@ measurements while returning. This profile does not change height.
 
 ## Simple motion workflow
 
-The fixed schedule uses one serpentine pass, with successive targets at most
-0.5 m apart, including the approach from home. It does not add a second,
-perpendicular full sweep by default. Reached intermediate targets preserve
-the velocity limiter; they do not command a deliberate stop. The immediate
-follower target is roughly 0.2 m ahead and capped at 0.5 m from the current pose.
+The default `explore` mode chooses nearby viewpoints based on unknown cells
+within the 0.80 m sensing radius. Potential gain only ranks candidates: it never
+changes unknown cells to free. Targets remain fixed until reached, blocked or
+timed out. Known-free viewpoints are preferred; when none is useful, short
+0.45 m exploration steps are considered. Actual motion uses A* and the four
+lateral sensors continuously. The follower target remains nearby.
 
-A* replans against measured occupancy with a 0.25 m obstacle margin. The
-four-sensor reactive correction operates between replans, with warning at
-0.50 m. The sweep stays 0.60 m inside the configured boundary. Unknown cells
-are penalized during exploration; visiting a target does not prove the
-surrounding area free. Blocked targets are deferred and retried once. One
-bounded repair pass can select nearby unknown sectors adjacent to free cells.
+Occupied grid components are recorded as partial obstacle observations.
+Inspection selects another known-free viewpoint around a component and uses
+A* with unknown cells blocked for that route. Angular views are credited from
+the aircraft position at the actual range measurement, not from its later
+position. Exploration and inspection alternate where suitable viewpoints exist.
+Several views still do not establish a complete contour or object identity.
 
-The terminal reports MOVE, RETREAT, HOLD or RETURN, the current local target,
-observed percentage and visited/remaining target counts. The survey budget
-includes motion and replanning; return has its own waypoint timeout. A
-budget of 180 s does not guarantee complete coverage. Choose flight duration
-using measured battery endurance and reserve time for return/landing.
+The mission returns when the measured coverage target is reached and no further
+eligible inspection view is selected, when information stops improving for
+45 seconds, or when the 180-second exploration flight budget expires. Return
+has its own waypoint timeout. The finish trigger is recorded separately from
+coverage, and a lack of progress is not proof that the remaining area is
+physically inaccessible. The pure software scheduler accepts an unlimited
+budget; the physical flight CLI retains a finite budget for return and landing.
+Choose that budget using measured battery endurance.
+
+Use `--no-inspect-obstacles` to isolate coverage behavior while debugging.
+`--coverage-mode survey` retains the previous fixed serpentine scheduler;
+`--coverage-spacing` applies to that scheduler. Adaptive exploration currently
+supports one height only. The warning distance remains 0.50 m and the obstacle
+planning margin 0.25 m; the map radius is a separate 0.80 m setting.
+
+RViz starts with a separate English **Live mapping status** window showing
+observed percentage, target, current phase, unknown cells, visited viewpoints
+and stop trigger. The map remains in RViz; the panel receives the same live
+telemetry and never accesses the radio.
 
 ## What RViz means
 
@@ -160,8 +176,26 @@ the coding agent.
 Multiple height support remains available for later work; this demonstration
 intentionally configures a single layer only.
 
-The ideal single-height rotating wall model completed 49/49 targets and
+The legacy fixed-sweep ideal single-height rotating wall model completed 49/49 targets and
 returned in 167.8 s with 90.5% observed cells. Adding a fixed cylinder produced
 47/49 targets, 90.1% observed cells and a return in 193.4 s (including the
 separate return interval); minimum ideal surface clearance was 0.275 m.
 Neither scenario includes real missed returns, drift or radio/aircraft dynamics.
+
+The adaptive profile is evaluated separately from the legacy benchmark.
+A stagnation stop reports partial coverage and unresolved observations;
+it never marks the remaining blue cells as free. Occupied-component view
+history is included in the JSON navigation coverage diagnostics.
+
+Current adaptive software checks: the ideal 5 × 3 m wall model returned in
+161.8 s with 78.8% observed and `no_information_progress_returned`, keeping
+unobserved cells unknown. Adding a fixed cylinder returned in 168.2 s with
+86.2% observed and `coverage_target_reached_returned`. Minimum ideal cylinder
+surface separation was 0.224 m; this does not establish a guaranteed 0.25 m
+physical separation. These models omit aircraft dynamics and range dropouts.
+
+If grid quantization puts the aircraft's free start cell inside the inflated
+obstacle margin, adaptive A* can select a short outward exit of at most 0.20 m.
+Its sampled clearance must monotonically increase; raw occupied cells remain
+blocked and the rest of the planned route keeps the normal margin. An exit
+that cannot satisfy these conditions remains unresolved.
