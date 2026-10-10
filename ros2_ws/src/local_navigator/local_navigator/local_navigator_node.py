@@ -31,7 +31,11 @@ from hackathon_interfaces.msg import (
     Setpoint,
 )
 
-from .avoidance import AvoidanceConfig, reactive_correction
+from .avoidance import (
+    AvoidanceConfig,
+    reactive_correction,
+    vertical_limit,
+)
 from .follower import (
     FollowerConfig,
     RateLimiter,
@@ -127,7 +131,7 @@ class LocalNavigator(Node):
         )
 
         self.get_logger().info(
-            'TP-16/30/32/33/34 local navigator ready: '
+            'TP-16/30/32/33/34/35 local navigator ready: '
             '/hk/state + /hk/goal + /hk/path/processed + /hk/ranges + '
             '/hk/localization_health -> /hk/cmd/nav'
         )
@@ -142,6 +146,8 @@ class LocalNavigator(Node):
         self.declare_parameter('max_accel', 0.5)
         self.declare_parameter('goal_slowdown_radius', 0.5)
         self.declare_parameter('z_nominal', 0.5)
+        self.declare_parameter('z_min', 0.0)
+        self.declare_parameter('z_max', 1.5)
         self.declare_parameter('goal_timeout', 0.5)
         self.declare_parameter('map_frame', 'map')
 
@@ -185,6 +191,14 @@ class LocalNavigator(Node):
 
         self.z_nominal = float(
             self.get_parameter('z_nominal').value
+        )
+
+        self.z_min = float(
+            self.get_parameter('z_min').value
+        )
+
+        self.z_max = float(
+            self.get_parameter('z_max').value
         )
 
         self.goal_timeout = float(
@@ -235,6 +249,24 @@ class LocalNavigator(Node):
         if self.goal_slowdown_radius <= 0.0:
             raise ValueError(
                 'goal_slowdown_radius must be positive'
+            )
+
+        if not (
+            math.isfinite(self.z_min)
+            and math.isfinite(self.z_max)
+        ):
+            raise ValueError(
+                'z_min and z_max must be finite'
+            )
+
+        if self.z_min > self.z_max:
+            raise ValueError(
+                'z_min must not exceed z_max'
+            )
+
+        if not self.z_min <= self.z_nominal <= self.z_max:
+            raise ValueError(
+                'z_nominal must lie inside [z_min, z_max]'
             )
 
         if self.goal_timeout <= 0.0:
@@ -340,12 +372,14 @@ class LocalNavigator(Node):
         self.processed_path = points
 
     def _ranges_callback(self, msg):
-        """Store the latest horizontal range measurements."""
+        """Store the latest horizontal and vertical range measurements."""
         self.ranges = {
             'front': float(msg.front),
             'back': float(msg.back),
             'left': float(msg.left),
             'right': float(msg.right),
+            'up': float(msg.up),
+            'down': float(msg.down),
         }
 
     def _localization_health_callback(self, msg):
@@ -548,6 +582,31 @@ class LocalNavigator(Node):
             + vy_map / self.control_rate
         )
 
+        if self.ranges is None:
+            up_range = math.nan
+            down_range = math.nan
+        else:
+            up_range = self.ranges.get(
+                'up',
+                math.nan,
+            )
+            down_range = self.ranges.get(
+                'down',
+                math.nan,
+            )
+
+        z_target = vertical_limit(
+            z_target=self.z_nominal,
+            up_range=up_range,
+            down_range=down_range,
+            z_min=self.z_min,
+            z_max=self.z_max,
+            critical_distance=(
+                self.avoidance_config.critical_distance
+            ),
+            current_z=self.position[2],
+        )
+
         yaw = yaw_towards(
             position=self.position,
             target=navigation_target,
@@ -563,7 +622,7 @@ class LocalNavigator(Node):
 
         msg.position.x = float(target_x)
         msg.position.y = float(target_y)
-        msg.position.z = float(self.z_nominal)
+        msg.position.z = float(z_target)
 
         msg.velocity.x = 0.0
         msg.velocity.y = 0.0

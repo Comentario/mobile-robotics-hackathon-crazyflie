@@ -190,6 +190,82 @@ def vertical_limit(
     z_min,
     z_max,
     critical_distance,
+    current_z=None,
 ):
-    """Reserved for TP-35 vertical avoidance."""
-    raise NotImplementedError
+    """Limit a vertical target using the altitude envelope and range data.
+
+    A critical upward range blocks commands that would increase altitude.
+    A critical downward range blocks commands that would decrease altitude.
+    NaN and +inf are treated as unavailable or clear readings respectively,
+    while -inf is treated as a critical obstacle according to REP-117.
+    """
+    z_target = float(z_target)
+    z_min = float(z_min)
+    z_max = float(z_max)
+    critical_distance = float(critical_distance)
+
+    if not all(
+        math.isfinite(value)
+        for value in (
+            z_target,
+            z_min,
+            z_max,
+            critical_distance,
+        )
+    ):
+        raise ValueError(
+            'vertical limits and target must be finite'
+        )
+
+    if z_min > z_max:
+        raise ValueError(
+            'z_min must not exceed z_max'
+        )
+
+    if critical_distance <= 0.0:
+        raise ValueError(
+            'critical_distance must be positive'
+        )
+
+    safe_target = min(
+        z_max,
+        max(z_min, z_target),
+    )
+
+    if current_z is None:
+        return safe_target
+
+    current_z = float(current_z)
+
+    if not math.isfinite(current_z):
+        raise ValueError(
+            'current_z must be finite'
+        )
+
+    def is_critical(distance):
+        distance = float(distance)
+
+        if math.isnan(distance):
+            return False
+
+        if distance == math.inf:
+            return False
+
+        if distance == -math.inf:
+            return True
+
+        return distance <= critical_distance
+
+    if (
+        safe_target > current_z
+        and is_critical(up_range)
+    ):
+        safe_target = current_z
+
+    if (
+        safe_target < current_z
+        and is_critical(down_range)
+    ):
+        safe_target = current_z
+
+    return safe_target

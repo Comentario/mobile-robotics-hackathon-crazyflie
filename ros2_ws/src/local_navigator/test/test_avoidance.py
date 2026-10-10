@@ -7,6 +7,7 @@ import pytest
 from local_navigator.avoidance import (
     AvoidanceConfig,
     reactive_correction,
+    vertical_limit,
 )
 
 
@@ -136,11 +137,54 @@ def test_low_ttc_requests_hover():
     pass
 
 
-@pytest.mark.skip(reason='TP-35: vertical avoidance')
 def test_ceiling_blocks_ascent():
-    pass
+    target = vertical_limit(
+        z_target=0.8,
+        up_range=0.15,
+        down_range=math.inf,
+        z_min=0.0,
+        z_max=1.5,
+        critical_distance=0.2,
+        current_z=0.5,
+    )
+
+    assert target == pytest.approx(0.5)
 
 
-@pytest.mark.skip(reason='TP-35: vertical avoidance')
 def test_floor_blocks_descent():
-    pass
+    target = vertical_limit(
+        z_target=0.2,
+        up_range=math.inf,
+        down_range=0.15,
+        z_min=0.0,
+        z_max=1.5,
+        critical_distance=0.2,
+        current_z=0.5,
+    )
+
+    assert target == pytest.approx(0.5)
+
+
+def test_vertical_target_respects_altitude_envelope():
+    high_target = vertical_limit(
+        z_target=2.0,
+        up_range=math.inf,
+        down_range=math.inf,
+        z_min=0.1,
+        z_max=1.5,
+        critical_distance=0.2,
+        current_z=0.5,
+    )
+
+    low_target = vertical_limit(
+        z_target=-0.2,
+        up_range=math.inf,
+        down_range=math.inf,
+        z_min=0.1,
+        z_max=1.5,
+        critical_distance=0.2,
+        current_z=0.5,
+    )
+
+    assert high_target == pytest.approx(1.5)
+    assert low_target == pytest.approx(0.1)
