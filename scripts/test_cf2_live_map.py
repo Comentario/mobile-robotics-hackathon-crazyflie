@@ -53,6 +53,20 @@ class LiveMappingTests(unittest.TestCase):
         m.update({'log': 'cf2_navigation', 'session_id': 'one', 'data': {'state': 'HOVER'}}, now=3)
         self.assertEqual(m.snapshot(now=3)['age_seconds'], 2)
 
+    def test_presentation_requires_persistence_and_expires_without_changing_control(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        cell = m.cell(1, 0)
+        self.assertEqual(m.snapshot(now=1)['data'][cell], 100)
+        self.assertEqual(m.snapshot(now=1)['presentation_data'][cell], -1)
+        for now in [1.2, 1.4, 1.7]:
+            m.update(ranges(), now=now)
+        self.assertEqual(m.snapshot(now=1.7)['presentation_data'][cell], 100)
+        self.assertEqual(m.snapshot(now=7)['presentation_data'][cell], -1)
+        self.assertEqual(m.snapshot(now=7)['data'][cell], 100)
+        self.assertEqual(m.snapshot(now=7)['recent_hits'], [])
+
     def test_moving_object_can_clear_and_observations_expire(self):
         m = LiveMap(decay_seconds=20)
         m.update(pose(), now=1)

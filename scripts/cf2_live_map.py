@@ -35,6 +35,8 @@ class LiveMap:
         self.start, self.navigation = None, None
         self.last_received = None
         self.last_pose_at = self.last_ranges_at = None
+        self.hit_history = {}
+        self.recent_hits = deque(maxlen=400)
         self.stats = {'hits': 0, 'invalid_ranges': 0, 'unpaired': 0,
                       'outside_map': 0, 'mapped_samples': 0}
 
@@ -110,6 +112,13 @@ class LiveMap:
                         self.scores[cell] = 0
                     self.scores[cell] = max(-4, min(6, self.scores[cell] + delta))
                     self.updated[cell] = now
+                    if cell in free and self.scores[cell] <= 0:
+                        self.hit_history.pop(cell, None)
+                history = self.hit_history.setdefault(target, deque(maxlen=32))
+                if history and now-history[-1] > 1:
+                    history.clear()
+                history.append(now)
+                self.recent_hits.append((now, *end))
                 self.stats['hits'] += 1
 
     def snapshot(self, now=None):
@@ -118,9 +127,20 @@ class LiveMap:
             grid = [-1 if stamp is None or now - stamp > self.decay_seconds
                     else (100 if self.scores[i] > 0 else 0)
                     for i, stamp in enumerate(self.updated)]
+            # Presentation layer only: repeated observations, never synthetic walls.
+            persistent = []
+            for i, value in enumerate(grid):
+                history = self.hit_history.get(i)
+                confirmed = bool(history and len(history) >= 4 and
+                                 history[-1]-history[0] >= .6 and now-history[-1] <= 5)
+                persistent.append(100 if value == 100 and confirmed else (-1 if value == 100 else value))
+            while self.recent_hits and now-self.recent_hits[0][0] > 1.2:
+                self.recent_hits.popleft()
             return {'session_id': self.session, 'frame': f'cf2_local_{self.session}',
                     'resolution': self.resolution, 'width': self.width, 'height': self.width,
                     'origin': self.origin, 'data': grid, 'pose': self.pose,
+                    'presentation_data': persistent,
+                    'recent_hits': [(x, y) for _, x, y in self.recent_hits],
                     'ranges_mm': dict(self.ranges), 'trail': list(self.trail),
                     'start': self.start, 'navigation': self.navigation,
                     'stats': dict(self.stats), 'age_seconds': None if
@@ -146,8 +166,11 @@ class RosPublisher:
         self.ranges_pub = self.node.create_publisher(MultiRange, '/cf2/ranges', 10)
         self.range_pubs = {name: self.node.create_publisher(Range, f'/cf2/range/{name}', 10)
                            for name in ANGLES}
+        from cf2_rviz import RvizPublisher
+        self.rviz = RvizPublisher(self.node)
 
     def publish(self, state):
+        self.rviz.publish(state)
         if state['origin'] is None or state['age_seconds'] is None or state['age_seconds'] > 1:
             return
         stamp = self.node.get_clock().now().to_msg()
@@ -278,7 +301,7 @@ def main():
     Thread(target=replay if args.replay else receive, daemon=True).start()
     print(f'Live map: http://localhost:{args.port} | UDP 127.0.0.1:{args.udp_port}', flush=True)
     try:
-        while not done.wait(0.2):
+        while not done.wait(0.1 if ros else 0.2):
             if ros:
                 ros.publish(mapper.snapshot())
     except KeyboardInterrupt:

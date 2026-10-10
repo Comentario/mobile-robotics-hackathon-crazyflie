@@ -23,13 +23,43 @@ class NavigationTests(unittest.TestCase):
         self.assertLess(decision['velocity_body'][0], 0)
         self.assertFalse(decision['land'])
 
-    def test_critical_obstacle_overrides_route_without_motor_cut(self):
+    def test_critical_obstacle_allows_only_clear_outward_retreat(self):
         nav = Navigation([(.5, 0)])
         feed(nav, 1, front=159, right=84)
         decision = nav.tick(1.01)
+        self.assertLess(decision['velocity_body'][0], 0.)
+        self.assertGreaterEqual(decision['velocity_body'][1], 0.)
+        self.assertEqual(decision['state'], 'RETREAT')
+        self.assertFalse(decision['land'])
+
+    def test_retreat_blocked_by_obstacle_behind(self):
+        nav = Navigation()
+        feed(nav, 1, front=100, readings={'range.back':100})
+        decision = nav.tick(1.01)
         self.assertEqual(decision['velocity_body'], (0., 0., 0.))
         self.assertEqual(decision['state'], 'HOVER')
-        self.assertFalse(decision['land'])
+
+    def test_retreat_does_not_override_localization_failure(self):
+        nav = Navigation()
+        feed(nav, 1, front=100)
+        nav.tick(1.01)
+        feed(nav, 1.1, x=1., front=100)
+        decision = nav.tick(1.11)
+        self.assertEqual(decision['velocity_body'], (0., 0., 0.))
+        self.assertNotEqual(decision['state'], 'RETREAT')
+
+    def test_all_four_sensors_repulse_with_smooth_ramp(self):
+        for direction, axis, sign in [('front',0,-1), ('back',0,1), ('left',1,-1), ('right',1,1)]:
+            nav = Navigation(speed=.15, warning=.8)
+            velocities = []
+            for i in range(8):
+                now = 1+i*.05
+                feed(nav, now, readings={'range.'+direction:150})
+                velocity = nav.tick(now+.01)['velocity_body']
+                self.assertGreater(velocity[axis]*sign, 0)
+                velocities.append(velocity[axis])
+            self.assertAlmostEqual(abs(velocities[-1]), .15)
+            self.assertTrue(all(abs(b-a)<=.030001 for a,b in zip(velocities,velocities[1:])))
 
     def test_start_is_preserved_and_square_finishes_with_pose_feedback(self):
         nav = Navigation([(.3, 0), (.3, .3), (0, .3), (0, 0)], timeout=30)

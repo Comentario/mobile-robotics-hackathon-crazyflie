@@ -1,5 +1,7 @@
 # CF2: onboard sensing, local navigation and return
 
+For the presentation use [RViz live perception](cf2_rviz_presentation.md).
+
 Track 1: [Autonomous Navigation](https://mobile-robotics.eu/) requires
 waypoint navigation with onboard perception, localization, planning and
 collision-free trajectory execution under environmental changes. The public
@@ -16,6 +18,14 @@ Crazyswarm2/Lighthouse launch and ROS scheduling. The EKF and PID remain onboard
 
 Pipeline: telemetry -> local map -> inflated A* -> processed path -> follower
 -> smoothing -> reactive avoidance -> supervisor -> body-frame velocity.
+
+Closed-loop pose/range telemetry and decisions run at 20 Hz. Final velocity
+ramps at up to 0.6 m/s²; blocked directions are stopped immediately. The console
+reports every 0.5 s and the browser refreshes at 5 Hz, independent of control.
+All four lateral ToF sensors contribute simultaneously. TTC is handled by the
+supervisor without cancelling a strictly outward escape. Use `--speed 0.15`
+for a 15 cm/s speed cap; the default remains 10 cm/s. Physical tracking has not
+been validated for the updated ramp and telemetry rate yet.
 
 | Existing TP code reused | Role |
 |---|---|
@@ -69,9 +79,12 @@ Terminal 2:
   --fly --navigate --height 0.3 --hover-seconds 10 --live-map
 ```
 
-No waypoint route yet. A visible obstacle 35–45 cm away should cause a small
-horizontal correction AWAY from it. Under 25 cm, the supervisor requests
-horizontal hover, not forward motion. Avoid bringing anything close to the
+No waypoint route yet. Reaction begins within 80 cm by default
+(`--warning-distance 0.8`). A visible obstacle should cause a horizontal
+correction AWAY from it. Under 25 cm, `RETREAT` permits only outward components
+with clear destination channels; otherwise the supervisor keeps horizontal
+hover. Pose/range freshness and geofence failures cannot enable this exception.
+Avoid bringing anything close to the
 propellers. Confirm `CLOSED LOOP` and `NAV:` messages. This validates actual
 command signs and sensor-to-actuator wiring before a path around an obstacle.
 

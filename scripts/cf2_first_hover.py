@@ -53,6 +53,8 @@ def main():
     parser.add_argument('--navigate', action='store_true',
                         help='Closed-loop TP navigation/avoidance; without a route, reactive hover')
     parser.add_argument('--speed', type=float, default=0.1)
+    parser.add_argument('--warning-distance', type=float, default=0.8,
+                        help='Start reacting at this distance in metres (default 0.8)')
     parser.add_argument('--waypoint-timeout', type=float, default=30)
     parser.add_argument('--return-home', action='store_true',
                         help='Append start (0,0) as the last closed-loop waypoint')
@@ -90,6 +92,8 @@ def main():
         parser.error('--navigate mapping height must be between 0.2 and 0.4 m')
     if not math.isfinite(args.speed) or not 0 < args.speed <= .2:
         parser.error('--speed must be between 0 and 0.2 m/s')
+    if not math.isfinite(args.warning_distance) or not .3 <= args.warning_distance <= 2:
+        parser.error('--warning-distance must be between 0.3 and 2 m')
     if not math.isfinite(args.waypoint_timeout) or not 5 <= args.waypoint_timeout <= 120:
         parser.error('--waypoint-timeout must be between 5 and 120 seconds')
     if sum((args.fly, args.decks_only, args.test_emergency)) > 1:
@@ -126,7 +130,7 @@ def main():
             goals.append((0, 0))
         if any(abs(v) > 1.25 for goal in goals for v in goal):
             parser.error('Navigation goals must stay within 1.25 m of start')
-        nav = Navigation(goals, speed=args.speed, height=args.height,
+        nav = Navigation(goals, speed=args.speed, height=args.height, warning=args.warning_distance,
                          timeout=args.waypoint_timeout if goals else args.hover_seconds)
     session_id = uuid4().hex[:12]
     if args.fly:
@@ -155,6 +159,7 @@ def main():
                 'selected_sensor': args.sensor, 'forward_metres': args.forward,
                 'square_side_metres': args.square_side, 'rectangle_metres': args.rectangle,
                 'navigation_enabled': args.navigate, 'speed': args.speed,
+                'warning_distance': args.warning_distance,
                 'return_home': args.return_home,
                 'session_id': session_id}}) + '\n')
         scf = stack.enter_context(SyncCrazyflie(args.uri, cf=Crazyflie(rw_cache=str(cache))))
@@ -214,7 +219,7 @@ def main():
         for name, variables in log_specs:
             event = Event()
             events.append(event)
-            config = LogConfig(name=name, period_in_ms=100)
+            config = LogConfig(name=name, period_in_ms=50 if args.navigate and name != 'cf2_flow' else 100)
             for variable in variables:
                 config.add_variable(variable)
 

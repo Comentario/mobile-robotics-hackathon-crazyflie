@@ -50,6 +50,7 @@ class Navigation:
         self.avoidance = AvoidanceConfig(warning, clearance, 1.5, speed)
         self.follower = FollowerConfig(.2, speed, .3, .25, height)
         self.limiter = RateLimiter(.3)
+        self.output_limiter = RateLimiter(.6)
         self.pose, self.raw_ranges, self.ranges = None, {}, {}
         self.pose_time, self.range_time = None, None
         self.origin, self.fence, self.mission = None, None, None
@@ -124,6 +125,7 @@ class Navigation:
         stale = (self.pose_time is None or self.range_time is None or
                  now-self.pose_time > .4 or now-self.range_time > .4)
         if stale:
+            self.output_limiter.reset()
             self.stale_since = now if self.stale_since is None else self.stale_since
             result.update(reason='telemetry_stale', land=now-self.stale_since >= 2)
             return result
@@ -175,7 +177,8 @@ class Navigation:
         vx, vy, _ = self.limiter.apply(dt, requested)
         c, s = math.cos(yaw), math.sin(yaw)
         body, blocked, avoidance_reason = reactive_correction(ranges,
-            {k: -v if v is not None else math.nan for k, v in rates.items()},
+            # TTC already scales/blocks via supervisor; do not zero an outward retreat.
+            {},
             (c*vx+s*vy, -s*vx+c*vy, 0), self.avoidance)
         norm = math.hypot(*body[:2])
         factor = min(1, self.speed/norm) if norm else 1
@@ -188,14 +191,57 @@ class Navigation:
         candidate = {'mode': MODE_VELOCITY, 'position': pos,
                      'velocity': (c*bx-s*by, s*bx+c*by, 0), 'yaw': yaw}
         safe = self.supervisor.filter_command(candidate, state, scale, pos, self.fence, (.15, .6))
+        retreat = False
+        if reason == 'obstacle_close' and health == 0 and self.fence.contains(pos):
+            # Close-object HOVER must not cancel a strictly outward escape.
+            # Reject motion toward every nearby/invalid destination channel.
+            outward, _, _ = reactive_correction(ranges, {}, (0., 0., 0.), self.avoidance)
+            ex, ey = outward[:2]
+            norm = math.hypot(ex, ey)
+            if norm > self.speed:
+                ex, ey = ex*self.speed/norm, ey*self.speed/norm
+            for k, value in [('front', ex), ('back', -ex), ('left', ey), ('right', -ey)]:
+                distance = ranges.get(k, math.nan)
+                if value > 0 and (math.isnan(distance) or distance < self.warning):
+                    if k in ('front', 'back'): ex = 0.
+                    else: ey = 0.
+            # Only keep components escaping a threat on the opposite side.
+            if not ((ex < 0 and ranges.get('front', math.inf) < self.warning) or
+                    (ex > 0 and ranges.get('back', math.inf) < self.warning)):
+                ex = 0.
+            if not ((ey < 0 and ranges.get('left', math.inf) < self.warning) or
+                    (ey > 0 and ranges.get('right', math.inf) < self.warning)):
+                ey = 0.
+            if ex or ey:
+                escape = dict(candidate, velocity=(c*ex-s*ey, s*ex+c*ey, 0))
+                safe = self.supervisor.filter_command(escape, 0, 1., pos, self.fence, (.15, .6))
+                retreat = True
         if safe is None:
+            self.output_limiter.reset()
             result.update(land=state in (LAND, ABORT), reason=reason)
             return result
         vx, vy, _ = safe['velocity']
+        if state == 2 and not retreat:
+            self.output_limiter.reset()
+        else:
+            vx, vy, _ = self.output_limiter.apply(dt, (vx, vy, 0.))
+        # Acceleration smoothing may never retain motion into a close/invalid direction.
+        bx, by = c*vx+s*vy, -s*vx+c*vy
+        for k, value in [('front', bx), ('back', -bx), ('left', by), ('right', -by)]:
+            distance = ranges.get(k, math.nan)
+            threshold = self.warning if retreat else self.clearance
+            if value > 0 and (math.isnan(distance) or distance < threshold):
+                if k in ('front', 'back'): bx = 0.
+                else: by = 0.
+        projected = self.supervisor.filter_command(
+            dict(candidate, velocity=(c*bx-s*by, s*bx+c*by, 0.)),
+            0, 1., pos, self.fence, (.15, .6))
+        vx, vy, _ = projected['velocity']
+        self.output_limiter.reset((vx, vy, 0.))
         # Vertical range/height problems request the normal landing routine, never a motor cut.
         vertical_problem = pos[2] > .6 or ranges.get('up', math.inf) < .2
         result.update(velocity_body=(c*vx+s*vy, -s*vx+c*vy, 0.),
-            land=vertical_problem, state=('NORMAL', 'SLOW', 'HOVER', 'LAND', 'ABORT')[state],
+            land=vertical_problem, state='RETREAT' if retreat else ('NORMAL', 'SLOW', 'HOVER', 'LAND', 'ABORT')[state],
             reason='vertical_envelope' if vertical_problem else (reason or avoidance_reason or health_reason),
             path=self.path, replans=self.replans, start=self.origin,
             relative_xy=(pos[0]-self.origin[0], pos[1]-self.origin[1]))
