@@ -28,6 +28,7 @@ from rclpy.node import Node
 
 from hackathon_interfaces.msg import (
     LocalizationHealth,
+    MissionStatus,
     MultiRange,
     Setpoint,
 )
@@ -83,12 +84,16 @@ class LocalNavigator(Node):
         self.last_ranges_monotonic = None
         self.last_replan_reason = None
         self.localization_status = None
+        self.mission_active = False
+        self.last_state_monotonic = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
             '/hk/cmd/nav',
             10,
         )
+        self.create_subscription(MissionStatus, '/hk/mission_status',
+                                 self._mission_callback, 10)
 
         self.replan_pub = self.create_publisher(
             String,
@@ -161,6 +166,8 @@ class LocalNavigator(Node):
         self.declare_parameter('z_max', 1.5)
         self.declare_parameter('goal_timeout', 0.5)
         self.declare_parameter('map_frame', 'map')
+        self.state_timeout = float(self.declare_parameter('state_timeout', 0.3).value)
+        self.range_timeout = float(self.declare_parameter('range_timeout', 0.3).value)
 
         self.declare_parameter('warning_distance', 0.5)
         self.declare_parameter('critical_distance', 0.2)
@@ -289,6 +296,12 @@ class LocalNavigator(Node):
 
     def _state_callback(self, msg):
         """Store the latest normalized vehicle state."""
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        if msg.header.frame_id != self.map_frame or not all(
+            math.isfinite(v) for v in (p.x, p.y, p.z, q.x, q.y, q.z, q.w)
+        ):
+            return
+        self.last_state_monotonic = time.monotonic()
         self.position = (
             float(msg.pose.pose.position.x),
             float(msg.pose.pose.position.y),
@@ -483,6 +496,12 @@ class LocalNavigator(Node):
 
     def _control_tick(self):
         """Publish one smoothed local-navigation proposal."""
+        if not self.mission_active or self.last_state_monotonic is None:
+            return
+        if time.monotonic() - self.last_state_monotonic > self.state_timeout:
+            return
+        if self.last_ranges_monotonic is None or time.monotonic() - self.last_ranges_monotonic > self.range_timeout:
+            return
         if self.position is None:
             return
 
@@ -682,19 +701,25 @@ class LocalNavigator(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.map_frame
 
-        msg.mode = Setpoint.MODE_POSITION
+        msg.mode = Setpoint.MODE_VELOCITY
 
         msg.position.x = float(target_x)
         msg.position.y = float(target_y)
         msg.position.z = float(z_target)
 
-        msg.velocity.x = 0.0
-        msg.velocity.y = 0.0
+        msg.velocity.x = float(vx_map)
+        msg.velocity.y = float(vy_map)
         msg.velocity.z = 0.0
 
         msg.yaw = float(yaw)
 
         self.command_pub.publish(msg)
+
+    def _mission_callback(self, msg):
+        self.mission_active = msg.state == MissionStatus.NAVIGATE
+        if not self.mission_active:
+            self.rate_limiter.reset()
+            self.last_control_monotonic = None
 
 
 def main(args=None):

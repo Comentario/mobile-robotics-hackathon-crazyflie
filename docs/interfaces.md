@@ -92,7 +92,7 @@ Si hiciera falta el flujo óptico crudo (por ejemplo, para diagnosticar superfic
 
 ## Reglas
 
-1. **Solo `cf_adapter` conoce Crazyswarm2.** Ningún otro paquete usa topics o servicios `/cfXXX/...` (TP-09).
+1. **Solo `cf_adapter` conoce Crazyswarm2.** Los nodos de misión, navegación y seguridad no usan topics o servicios `/cfXXX/...` (TP-09). Los simuladores y `sim_sensors` producen/emulan la API externa.
 2. **`simulation_adapter` y `cf_adapter` deben exponer la misma API** (`/hk/adapter/*`, `/hk/takeoff`, `/hk/land`, `/hk/emergency`). Ambos adapters implementan esos endpoints; las limitaciones físicas y del backend se documentan abajo. Pasar de simulación a hardware consiste en cambiar el adapter (VS-5).
 3. **Solo `safety_supervisor` publica `/hk/cmd/safe`**, que es lo único que escuchan los adapters. `local_navigator` solo *propone* comandos en `/hk/cmd/nav`.
 4. Todo el stack consume **un único estado**: `/hk/state` (TP-14).
@@ -366,3 +366,19 @@ con 16 nodos, API/TF y cierre sin nodos residuales. Usa el simulador y un overla
 de prueba, sin órdenes de vuelo. TP-42 D queda
 pendiente; el runbook usa el servidor de Crazyswarm2 y `real.launch.py` en
 terminales separadas. Los parámetros actuales son de desarrollo, no del evento.
+
+
+### Integración MVP 2026-10-08
+
+`simulation_cf.launch.py` utiliza el cf_adapter robusto de main con fuente `pose`.
+El backend emulator conserva la API de persona 2; SIL usa el servidor de Crazyswarm2
+y sim_sensors para publicar pose/scan/ranges_extra desde TF y raycast.
+Los tópicos de la tabla anterior se mantienen. El navegador publica VELOCITY XY
+con la altura del waypoint y yaw constante; cf_adapter integra referencias FullState.
+MissionStatus habilita el navegador únicamente en NAVIGATE. La misión deja de
+avanzar waypoints durante HOVER y descuenta ese tiempo del timeout; seguridad
+sigue teniendo prioridad para aterrizar. Todos los temporizadores de control
+usan reloj ROS; en SIL se configura use_sim_time=true por nodo.
+
+Ver instrucciones reproducibles en [simulations.md](simulations.md) y límites
+de sensores en [sensor_model.md](sensor_model.md).

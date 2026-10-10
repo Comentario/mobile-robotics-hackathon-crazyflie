@@ -75,6 +75,7 @@ Con `--ros`, publicar:
 |---|---|---|
 | `/cf2/map` | `nav_msgs/msg/OccupancyGrid` | -1 desconocido, 0 libre, 100 ocupado |
 | `/cf2/odom` | `nav_msgs/msg/Odometry` | Pose local con yaw; covarianza provisional, no la del EKF |
+| `/cf2/ranges` | `hackathon_interfaces/msg/MultiRange` | Seis rangos en metros; retorno inválido como NaN |
 | `/cf2/range/front`, `/left`, `/back`, `/right` | `sensor_msgs/msg/Range` | Solo retornos utilizables, en metros |
 
 Frame del mapa: `cf2_local_<sesión>`. Los frames de sensores son propios del
@@ -84,6 +85,12 @@ alinear ambos frames y medir incertidumbre. Los rangos no válidos no publican
 una nueva muestra: los consumidores deben comprobar antigüedad.
 Topics son accesibles a otros nodos ROS del mismo entorno; comunicación entre
 laptops WSL/Ubuntu requiere comprobar descubrimiento DDS, red y ROS_DOMAIN_ID.
+
+Esta es la ruta de hardware de dron 2. `real.launch.py` pertenece al stack de
+Crazyswarm2 y no sustituye estos dos procesos. No arrancarlo simultáneamente
+contra la misma radio. Los TPs de planificación están integrados en la rama,
+pero todavía no mandan órdenes al script de recorrido. El mapa local no se
+debe renombrar a `map` de Lighthouse sin una transformación medida.
 
 La interfaz HTTP `GET http://localhost:8765/state` entrega el mismo mapa, pose,
 rangos, trayectoria, sesión, edad de datos y estadísticas en JSON. Se sirve

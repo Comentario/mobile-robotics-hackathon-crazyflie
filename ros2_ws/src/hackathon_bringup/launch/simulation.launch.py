@@ -41,6 +41,7 @@ def _setup(context):
         parameters=params + [extra, {
             'world_file': world_file,
             'scenario_file': scenario_file,
+            'publish_tf': False, # state_monitor es el único propietario de map → base_link
         }],
     )]
     nodes += static_sensor_tfs(config_dir, shared_frames(params))

@@ -123,6 +123,7 @@ class RosPublisher:
         import rclpy
         from nav_msgs.msg import OccupancyGrid, Odometry
         from sensor_msgs.msg import Range
+        from hackathon_interfaces.msg import MultiRange
         from rclpy.qos import QoSProfile, DurabilityPolicy
         self.rclpy, self.Grid, self.Odom, self.Range = rclpy, OccupancyGrid, Odometry, Range
         rclpy.init()
@@ -130,6 +131,8 @@ class RosPublisher:
         self.map_pub = self.node.create_publisher(OccupancyGrid, '/cf2/map',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.pose_pub = self.node.create_publisher(Odometry, '/cf2/odom', 10)
+        self.MultiRange = MultiRange
+        self.ranges_pub = self.node.create_publisher(MultiRange, '/cf2/ranges', 10)
         self.range_pubs = {name: self.node.create_publisher(Range, f'/cf2/range/{name}', 10)
                            for name in ANGLES}
 
@@ -159,6 +162,16 @@ class RosPublisher:
         odom.pose.covariance[14] = 0.04
         odom.pose.covariance[35] = 0.1
         self.pose_pub.publish(odom)
+        ranges = self.MultiRange()
+        ranges.header.stamp = stamp
+        ranges.header.frame_id = 'cf2_base_link'
+        ranges.range_min, ranges.range_max = 0.05, 4.0
+        for direction in ('front', 'back', 'left', 'right', 'up', 'down'):
+            raw = state['ranges_mm'].get(f'range.{direction}')
+            # Unknown returns remain unknown; never turn sentinel 32766 into free space.
+            value = raw / 1000 if raw is not None and 50 <= raw <= 4000 else float('nan')
+            setattr(ranges, direction, value)
+        self.ranges_pub.publish(ranges)
         for direction, publisher in self.range_pubs.items():
             raw = state['ranges_mm'].get(f'range.{direction}')
             if raw is None or not 50 <= raw <= 4000:

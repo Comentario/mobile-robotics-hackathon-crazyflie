@@ -215,3 +215,12 @@ def test_start_can_restart_terminal_mission():
     assert machine.state == PREFLIGHT
     assert machine.index == 0
     assert machine.reason == ''
+
+
+def test_hover_suspends_waypoint_deadline():
+    from mission_manager.mission import MissionStateMachine,Waypoint,SAFETY_HOVER
+    m=MissionStateMachine([Waypoint(1,0,.5)],.15,3,takeoff_height=.5)
+    m.start(0);m.step(0,(0,0,.5),0,0,0);m.step(1,(0,0,.5),0,0,0)
+    assert m.step(2,(0,0,.5),0,SAFETY_HOVER,0)==('none',)
+    m.step(10,(0,0,.5),0,SAFETY_HOVER,0)
+    assert m.step(11,(0,0,.5),0,0,0)[0]=='goal'
