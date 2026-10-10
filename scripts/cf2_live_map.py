@@ -32,7 +32,9 @@ class LiveMap:
         self.poses = deque(maxlen=20)
         self.trail = deque(maxlen=2000)
         self.pose, self.ranges = None, {}
+        self.start, self.navigation = None, None
         self.last_received = None
+        self.last_pose_at = self.last_ranges_at = None
         self.stats = {'hits': 0, 'invalid_ranges': 0, 'unpaired': 0,
                       'outside_map': 0, 'mapped_samples': 0}
 
@@ -51,23 +53,29 @@ class LiveMap:
                 self.reset(session)
             self.last_received = now
             name, data = row.get('log'), row.get('data', {})
+            if name == 'cf2_navigation':
+                self.navigation = dict(data)
+                return
             if name == 'cf2_pose':
                 keys = ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
                         'stateEstimate.yaw')
                 if not all(key in data and math.isfinite(data[key]) for key in keys):
                     return
                 self.pose = dict(data)
+                self.last_pose_at = now
                 self.poses.append((row['timestamp_ms'], dict(data), row.get('hovering', False)))
                 if row.get('hovering') and self.min_height <= data['stateEstimate.z'] <= self.max_height:
                     if self.origin is None:
                         half = self.width * self.resolution / 2
                         self.origin = (data['stateEstimate.x'] - half,
                                        data['stateEstimate.y'] - half)
+                        self.start = (data['stateEstimate.x'], data['stateEstimate.y'])
                     self.trail.append((data['stateEstimate.x'], data['stateEstimate.y']))
                 return
             if name != 'cf2_ranges':
                 return
             self.ranges = dict(data)
+            self.last_ranges_at = now
             if not row.get('hovering') or not self.poses or self.origin is None:
                 return
             stamp, pose, airborne = min(self.poses, key=lambda item: abs(item[0] - row['timestamp_ms']))
@@ -114,8 +122,11 @@ class LiveMap:
                     'resolution': self.resolution, 'width': self.width, 'height': self.width,
                     'origin': self.origin, 'data': grid, 'pose': self.pose,
                     'ranges_mm': dict(self.ranges), 'trail': list(self.trail),
-                    'stats': dict(self.stats), 'age_seconds': None if self.last_received is None
-                    else now - self.last_received, 'decay_seconds': self.decay_seconds}
+                    'start': self.start, 'navigation': self.navigation,
+                    'stats': dict(self.stats), 'age_seconds': None if
+                    self.last_pose_at is None or self.last_ranges_at is None else
+                    max(now-self.last_pose_at, now-self.last_ranges_at),
+                    'decay_seconds': self.decay_seconds}
 
 
 class RosPublisher:
@@ -167,7 +178,7 @@ class RosPublisher:
         ranges.header.frame_id = 'cf2_base_link'
         ranges.range_min, ranges.range_max = 0.05, 4.0
         for direction in ('front', 'back', 'left', 'right', 'up', 'down'):
-            raw = state['ranges_mm'].get(f'range.{direction}')
+            raw = state['ranges_mm'].get('range.zrange' if direction == 'down' else f'range.{direction}')
             # Unknown returns remain unknown; never turn sentinel 32766 into free space.
             value = raw / 1000 if raw is not None and 50 <= raw <= 4000 else float('nan')
             setattr(ranges, direction, value)
@@ -207,6 +218,11 @@ def main():
         def do_GET(self):
             if self.path == '/state':
                 body, mime = json.dumps(mapper.snapshot(), allow_nan=False).encode(), 'application/json'
+            elif self.path == '/export':
+                snapshot = mapper.snapshot()
+                snapshot['coordinate_reference'] = 'Session EKF frame; start stores the local XY reference'
+                snapshot['shared_frame_aligned'] = False
+                body, mime = json.dumps(snapshot, allow_nan=False).encode(), 'application/json'
             elif self.path == '/':
                 body, mime = page, 'text/html; charset=utf-8'
             else:
@@ -216,6 +232,8 @@ def main():
             self.send_header('Content-Type', mime)
             self.send_header('Cache-Control', 'no-store')
             self.send_header('Content-Length', str(len(body)))
+            if self.path == '/export':
+                self.send_header('Content-Disposition', 'attachment; filename="cf2-map.json"')
             self.end_headers()
             self.wfile.write(body)
 

@@ -54,8 +54,13 @@ El mapper publica `/cf2/map`, `/cf2/odom`, `/cf2/ranges` (MultiRange) y
 rangos individuales. Conserva un frame propio por sesión; no representa
 posición absoluta ni SLAM. Rangos inválidos permanecen desconocidos.
 
-El recorrido actual es abierto y no consume `/hk/cmd/safe`. A* y evitación
-están disponibles en la rama, pero no controlan el dron físico todavía.
+Los recorridos sin `--navigate` son abiertos y no consumen `/hk/cmd/safe`.
+La nueva [demostración autónoma CF2](cf2_autonomous_demo.md) conecta las
+funciones puras de los TPs directamente al proceso cflib mediante `--navigate`:
+A*, seguimiento, evitación y supervisor producen la velocidad enviada a radio.
+No ejecuta los nodos ROS de la misión y no requiere Lighthouse. Esta ruta pasa
+17 pruebas de mapa/control, incluyendo obstáculo, retorno y datos vencidos;
+su respuesta física todavía requiere validación con el mentor.
 `local_world_model` del stack general continúa siendo un esqueleto: para
 nuestro primer objetivo el mapa lo produce el mapper CF2 implementado.
 No activar `real.launch.py` junto al script de radio.

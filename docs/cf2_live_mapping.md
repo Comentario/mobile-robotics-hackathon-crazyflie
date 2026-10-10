@@ -1,5 +1,9 @@
 # Mapeado 2D durante el vuelo del dron 2
 
+**Para navegación con evitación y retorno, usar la nueva
+[guía autónoma CF2](cf2_autonomous_demo.md).** Los comandos de recorrido
+de este documento sin `--navigate` son pruebas abiertas de mapeado.
+
 Un único vuelo produce telemetría, mapa incremental y visualización. No hace
 falta aterrizar para calcular el mapa. No utiliza Lighthouse ni conecta al dron 1.
 

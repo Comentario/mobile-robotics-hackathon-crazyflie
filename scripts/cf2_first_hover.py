@@ -13,6 +13,7 @@ from pathlib import Path
 from threading import Event
 from threading import Lock
 from contextlib import ExitStack
+from collections import deque
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -49,6 +50,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--uri', required=True)
     parser.add_argument('--fly', action='store_true')
+    parser.add_argument('--navigate', action='store_true',
+                        help='Closed-loop TP navigation/avoidance; without a route, reactive hover')
+    parser.add_argument('--speed', type=float, default=0.1)
+    parser.add_argument('--waypoint-timeout', type=float, default=30)
+    parser.add_argument('--return-home', action='store_true',
+                        help='Append start (0,0) as the last closed-loop waypoint')
     parser.add_argument('--test-emergency', action='store_true',
                         help='Send emergency stop on the ground, without arming')
     parser.add_argument('--height', type=float, default=0.3,
@@ -75,6 +82,16 @@ def main():
     parser.add_argument('--record', type=Path,
                         help='Create a new JSONL telemetry file; never overwrite')
     args = parser.parse_args()
+    if args.navigate and not args.fly:
+        parser.error('--navigate requires --fly')
+    if args.return_home and (not args.navigate or not (args.forward or args.square_side or args.rectangle)):
+        parser.error('--return-home requires --navigate and a route')
+    if args.navigate and not .2 <= args.height <= .4:
+        parser.error('--navigate mapping height must be between 0.2 and 0.4 m')
+    if not math.isfinite(args.speed) or not 0 < args.speed <= .2:
+        parser.error('--speed must be between 0 and 0.2 m/s')
+    if not math.isfinite(args.waypoint_timeout) or not 5 <= args.waypoint_timeout <= 120:
+        parser.error('--waypoint-timeout must be between 5 and 120 seconds')
     if sum((args.fly, args.decks_only, args.test_emergency)) > 1:
         parser.error('--fly, --decks-only and --test-emergency are mutually exclusive')
     if not 1 <= args.seconds <= 300:
@@ -98,6 +115,19 @@ def main():
             parser.error('--rectangle requires --fly; choose only one route')
     if not 1 <= args.map_port <= 65535:
         parser.error('--map-port must be between 1 and 65535')
+    nav = None
+    if args.navigate:
+        from cf2_navigation import Navigation
+        goals = [(args.forward, 0)] if args.forward else []
+        if args.square_side or args.rectangle:
+            a, b = args.rectangle or (args.square_side, args.square_side)
+            goals = [(a, 0), (a, b), (0, b), (0, 0)]
+        if args.return_home and goals[-1] != (0, 0):
+            goals.append((0, 0))
+        if any(abs(v) > 1.25 for goal in goals for v in goal):
+            parser.error('Navigation goals must stay within 1.25 m of start')
+        nav = Navigation(goals, speed=args.speed, height=args.height,
+                         timeout=args.waypoint_timeout if goals else args.hover_seconds)
     session_id = uuid4().hex[:12]
     if args.fly:
         args.flow_diagnostics = True
@@ -109,6 +139,8 @@ def main():
     with ExitStack() as stack:
         recording = None
         record_lock = Lock()
+        telemetry_lock = Lock()
+        telemetry = deque(maxlen=2000)
         hovering = Event()
         phase = {'name': 'ground'}
         live_socket = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM)) if args.live_map else None
@@ -122,6 +154,8 @@ def main():
                 'height': args.height, 'hover_seconds': args.hover_seconds,
                 'selected_sensor': args.sensor, 'forward_metres': args.forward,
                 'square_side_metres': args.square_side, 'rectangle_metres': args.rectangle,
+                'navigation_enabled': args.navigate, 'speed': args.speed,
+                'return_home': args.return_home,
                 'session_id': session_id}}) + '\n')
         scf = stack.enter_context(SyncCrazyflie(args.uri, cf=Crazyflie(rw_cache=str(cache))))
         print('Connected; waiting for parameter download.', flush=True)
@@ -185,9 +219,13 @@ def main():
                 config.add_variable(variable)
 
             def received(timestamp, data, logconf, ready=event):
-                row = json.dumps({'log': logconf.name, 'timestamp_ms': timestamp,
+                sample = {'log': logconf.name, 'timestamp_ms': timestamp,
                                   'data': data, 'hovering': hovering.is_set(),
-                                  'phase': phase['name'], 'session_id': session_id})
+                                  'phase': phase['name'], 'session_id': session_id}
+                if args.navigate:
+                    with telemetry_lock:
+                        telemetry.append((sample, time.monotonic()))
+                row = json.dumps(sample)
                 if live_socket:
                     try:
                         live_socket.sendto(row.encode(), ('127.0.0.1', args.map_port))
@@ -226,16 +264,67 @@ def main():
                         hovering.set()
                         phase['name'] = 'hover'
                         try:
-                            print('HOVER START: sensor measurement window.', flush=True)
-                            time.sleep(args.hover_seconds)
-                            if args.forward:
+                            if args.navigate:
+                                phase['name'] = 'navigation'
+                                last_report = 0
+                                print('CLOSED LOOP: mapping -> A* -> follower -> avoidance -> safety -> radio.', flush=True)
+                                while True:
+                                    now = time.monotonic()
+                                    with telemetry_lock:
+                                        samples = list(telemetry)
+                                        telemetry.clear()
+                                    for sample, received_at in samples:
+                                        # Ignore estimator-reset and ascent data in navigation.
+                                        if sample['hovering']:
+                                            nav.update(sample, received_at)
+                                    decision = nav.tick(now)
+                                    if decision['land']:
+                                        motion.stop()
+                                        decision['state'] = 'LAND'
+                                        row = json.dumps({'log': 'cf2_navigation', 'data': decision,
+                                                          'session_id': session_id})
+                                        if live_socket:
+                                            live_socket.sendto(row.encode(), ('127.0.0.1', args.map_port))
+                                        if recording:
+                                            with record_lock:
+                                                recording.write(row + '\n')
+                                                recording.flush()
+                                        snapshot = nav.mapper.snapshot(now)
+                                        snapshot['navigation'] = decision
+                                        snapshot['start'] = nav.origin
+                                        snapshot['shared_frame_aligned'] = False
+                                        map_file = args.record.with_name(args.record.stem + '_map.json')
+                                        map_file.write_text(json.dumps(snapshot, allow_nan=False))
+                                        print(f'Map snapshot: {map_file}', flush=True)
+                                        print('NAV LAND: ' + decision['reason'], flush=True)
+                                        break
+                                    motion.start_linear_motion(*decision['velocity_body'])
+                                    if now-last_report >= .5:
+                                        last_report = now
+                                        print(f"NAV: {decision['state']} | {decision['reason']} | "
+                                              f"body velocity={decision['velocity_body']} | "
+                                              f"waypoint={decision['waypoint_index']} | replans={decision['replans']}", flush=True)
+                                        row = json.dumps({'log': 'cf2_navigation', 'data': decision,
+                                                          'session_id': session_id})
+                                        if live_socket:
+                                            live_socket.sendto(row.encode(), ('127.0.0.1', args.map_port))
+                                        if recording:
+                                            with record_lock:
+                                                recording.write(row + '\n')
+                                    time.sleep(.05)
+                            else:
+                                print('OPEN LOOP: automatic obstacle avoidance is NOT enabled.', flush=True)
+                            if not args.navigate:
+                                print('HOVER START: sensor measurement window.', flush=True)
+                                time.sleep(args.hover_seconds)
+                            if args.forward and not args.navigate:
                                 phase['name'] = 'forward'
                                 print(f'FORWARD: {args.forward} m at 0.1 m/s.', flush=True)
                                 motion.start_forward(velocity=0.1)
                                 time.sleep(args.forward / 0.1)
                                 motion.stop()
                                 time.sleep(1)
-                            if args.square_side or args.rectangle:
+                            if (args.square_side or args.rectangle) and not args.navigate:
                                 forward_length, left_length = (args.rectangle or
                                                                (args.square_side, args.square_side))
                                 for label, vx, vy, distance in [

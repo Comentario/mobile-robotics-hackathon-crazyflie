@@ -45,6 +45,14 @@ class LiveMappingTests(unittest.TestCase):
         self.assertEqual(m.snapshot(now=3)['stats']['hits'], 0)
         self.assertTrue(all(v == -1 for v in m.snapshot(now=3)['data']))
 
+    def test_navigation_status_cannot_hide_stale_pose(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        self.assertEqual(m.snapshot(now=1)['start'], (0, 0))
+        m.update({'log': 'cf2_navigation', 'session_id': 'one', 'data': {'state': 'HOVER'}}, now=3)
+        self.assertEqual(m.snapshot(now=3)['age_seconds'], 2)
+
     def test_moving_object_can_clear_and_observations_expire(self):
         m = LiveMap(decay_seconds=20)
         m.update(pose(), now=1)
