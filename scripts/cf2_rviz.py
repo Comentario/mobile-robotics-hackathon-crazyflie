@@ -130,7 +130,7 @@ class RvizPublisher:
                     raw = s['ranges_mm'].get('range.'+direction)
                     if raw is None or not math.isfinite(raw) or not 50 <= raw <= 4000:
                         continue
-                    distance = min(raw/1000, s.get('mapping_radius_m', .8))
+                    distance = min(raw/1000, s.get('free_radius_m') or s.get('mapping_radius_m', .8))
                     beam = marker(direction.title()+' ToF', Marker.LINE_LIST, color, (.012, 0., 0.))
                     beam.points = [point(x, y, .08), point(
                         x+distance*math.cos(yaw+offset), y+distance*math.sin(yaw+offset), .08)]

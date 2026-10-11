@@ -340,3 +340,7 @@ Antes de compartir logs, revisar que no contengan datos privados. No guardar cla
 ---
 
 Documento vivo del equipo. Actualizar las casillas de estado, los sensores confirmados y la arquitectura real en cuanto los mentores den detalles.
+
+For a drone-free, one-height fixed zigzag with live RViz mapping, see
+[CF2 survey simulation](docs/cf2_survey_simulation.md). The simulator uses static
+scenarios and distinguishes ideal simulated results from hardware validation.

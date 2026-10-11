@@ -19,7 +19,7 @@ class StatusPanel:
         coverage = nav.get('coverage') or {}
         age = snapshot.get('age_seconds')
         live = 'WAITING' if age is None else ('LIVE' if age <= 1 else 'STALE DATA')
-        self.status.setText(f"{live} · {coverage.get('phase', 'WAITING')}")
+        self.status.setText(f"{nav.get('source', 'FLIGHT TELEMETRY')} · {live} · {coverage.get('phase', 'WAITING')}")
         percent = coverage.get('observed_percent', 0)
         self.progress.setValue(round(percent*10))
         self.details.setText(

@@ -29,16 +29,18 @@ def validate_heights(heights):
 
 class LayeredMap:
     def __init__(self, heights=(.3,), width=160, resolution=.05, tolerance=.045,
-                 decay_seconds=600, persistent_seconds=600, retain_observations=True, mapping_radius=.8):
+                 decay_seconds=600, persistent_seconds=600, retain_observations=True, mapping_radius=.8, free_radius=None):
         self.heights = validate_heights(heights)
         self.width, self.resolution, self.tolerance = width, resolution, tolerance
         self.decay_seconds, self.persistent_seconds = decay_seconds, persistent_seconds
         self.retain_observations = retain_observations
         self.mapping_radius = mapping_radius
+        self.free_radius = self.default_free_radius = free_radius
         self.lock = RLock()
         self.reset('waiting')
 
     def reset(self, session):
+        self.free_radius = self.default_free_radius
         self.session, self.maps = session, {}
         self.active = 0
         self.pose, self.ranges, self.start, self.navigation = None, {}, None, None
@@ -56,7 +58,7 @@ class LayeredMap:
                 self.maps[z] = LiveMap(self.resolution, self.width, z-self.tolerance,
                     z+self.tolerance, decay_seconds=self.decay_seconds,
                     persistent_seconds=self.persistent_seconds, retain_observations=self.retain_observations,
-                    mapping_radius=self.mapping_radius, record_visited_centres=True)
+                    mapping_radius=self.mapping_radius, record_visited_centres=True, free_radius=self.free_radius)
                 self.maps[z].reset(self.session)
                 self.maps[z].origin = self.grid_origin
                 self.maps[z].start = self.start
@@ -87,6 +89,11 @@ class LayeredMap:
                 self.mapping_radius = radius
                 for m in self.maps.values():
                     m.mapping_radius = radius
+            free_radius = data.get('free_radius_m')
+            if free_radius is not None and math.isfinite(free_radius) and .1 <= free_radius <= self.mapping_radius:
+                self.free_radius = free_radius
+                for m in self.maps.values():
+                    m.free_radius = free_radius
             if data.get('survey_heights'):
                 self._configure(data['survey_heights'])
             reference = data.get('start')
@@ -172,7 +179,7 @@ class LayeredMap:
         current.update(origin=self.grid_origin, start=self.start, pose=self.pose,
             navigation=self.navigation, ranges_mm=self.ranges, trail=list(self.trail),
             layers=layers, active_layer=self.active, survey_heights=list(self.heights),
-            area=self.area, presentation_data=composite,
+            area=self.area, free_radius_m=self.free_radius, presentation_data=composite,
             data=layers[self.active]['data'],
             recent_hits=recent,
             age_seconds=None if self.last_pose_at is None or self.last_ranges_at is None else

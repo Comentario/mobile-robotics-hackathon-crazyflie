@@ -18,7 +18,7 @@ from cf2_build_map import ANGLES, ray_endpoint
 class LiveMap:
     def __init__(self, resolution=0.05, width=160, min_height=0.2, max_height=0.4,
                  decay_seconds=120, persistent_seconds=5, retain_observations=False, mapping_radius=4.,
-                 record_visited_centres=False):
+                 record_visited_centres=False, free_radius=None):
         self.resolution, self.width = resolution, width
         self.min_height, self.max_height = min_height, max_height
         self.decay_seconds = decay_seconds
@@ -27,6 +27,9 @@ class LiveMap:
         if not math.isfinite(mapping_radius) or not .3 <= mapping_radius <= 4:
             raise ValueError('Mapping radius must be between 0.3 and 4 m')
         self.mapping_radius = mapping_radius
+        self.free_radius = free_radius
+        if free_radius is not None and (not math.isfinite(free_radius) or not .1 <= free_radius <= mapping_radius):
+            raise ValueError('Free reveal radius must be 0.1 m..mapping radius')
         self.record_visited_centres = record_visited_centres
         self.lock = Lock()
         self.reset('waiting')
@@ -123,16 +126,20 @@ class LiveMap:
                 if target is None or self.cell(*start) is None:
                     self.stats['outside_map'] += 1
                     continue
-                steps = max(1, math.ceil(distance / (self.resolution / 2)))
+                free_distance = min(distance, self.free_radius or distance)
+                free_end = ray_endpoint(pose, direction, free_distance)
+                steps = max(1, math.ceil(free_distance / (self.resolution / 2)))
                 free = set()
                 for step in range(steps):
                     fraction = step / steps
-                    cell = self.cell(start[0] + (end[0] - start[0]) * fraction,
-                                     start[1] + (end[1] - start[1]) * fraction)
+                    cell = self.cell(start[0] + (free_end[0] - start[0]) * fraction,
+                                     start[1] + (free_end[1] - start[1]) * fraction)
                     if cell is not None and cell != target:
                         free.add(cell)
-                if not obstacle:
-                    free.add(target)
+                if not obstacle or free_distance < distance:
+                    last_free = self.cell(*free_end)
+                    if last_free is not None and (last_free != target or not obstacle):
+                        free.add(last_free)
                 for cell, delta in [(cell, -1) for cell in free] + ([(target, 3)] if obstacle else []):
                     previous = self.updated[cell]
                     if previous is None or (not self.retain_observations and now - previous > self.decay_seconds):
@@ -177,7 +184,7 @@ class LiveMap:
                 self.recent_hits.popleft()
             while self.recent_observations and now-self.recent_observations[0]['time'] > 1.2:
                 self.recent_observations.popleft()
-            return {'recent_observations': list(self.recent_observations), 'session_id': self.session, 'frame': f'cf2_local_{self.session}',
+            return {'free_radius_m': self.free_radius, 'recent_observations': list(self.recent_observations), 'session_id': self.session, 'frame': f'cf2_local_{self.session}',
                     'resolution': self.resolution, 'width': self.width, 'height': self.width,
                     'origin': self.origin, 'data': grid, 'pose': self.pose,
                     'presentation_data': persistent,
