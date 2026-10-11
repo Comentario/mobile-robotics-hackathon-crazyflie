@@ -71,6 +71,12 @@ class RvizPublisher:
         home.pose.position.z = .02
         hits = marker('Recent returns', Marker.SPHERE_LIST, (1., .55, .12, .65), (.065, .065, .065))
         hits.points = [point(x, y, .035) for x, y in s['recent_hits']]
+        pending = marker('Unconfirmed occupied cells', Marker.CUBE_LIST,
+                         (1., .55, .12, .85), (.03, .03, .02))
+        pending.points = [point(s['origin'][0]+(i % s['width']+.5)*s['resolution'],
+                                s['origin'][1]+(i // s['width']+.5)*s['resolution'], .045)
+                          for i,value in enumerate(s['data'])
+                          if value == 100 and s['presentation_data'][i] != 100]
         # Coplanar triangle tiles avoid cube side edges and z-fighting seams.
         observed = marker('Observed free space', Marker.TRIANGLE_LIST, (.97, .98, 1., 1.), (1., 1., 1.))
         persistent = marker('Persistent observations', Marker.TRIANGLE_LIST, (.04, .05, .07, 1.), (1., 1., 1.))

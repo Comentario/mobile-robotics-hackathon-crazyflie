@@ -18,7 +18,7 @@ from cf2_build_map import ANGLES, ray_endpoint
 class LiveMap:
     def __init__(self, resolution=0.05, width=160, min_height=0.2, max_height=0.4,
                  decay_seconds=120, persistent_seconds=5, retain_observations=False, mapping_radius=4.,
-                 record_visited_centres=False, free_radius=None):
+                 record_visited_centres=False, free_radius=None, confirmation='cell'):
         self.resolution, self.width = resolution, width
         self.min_height, self.max_height = min_height, max_height
         self.decay_seconds = decay_seconds
@@ -30,6 +30,9 @@ class LiveMap:
         self.free_radius = free_radius
         if free_radius is not None and (not math.isfinite(free_radius) or not .1 <= free_radius <= mapping_radius):
             raise ValueError('Free reveal radius must be 0.1 m..mapping radius')
+        if confirmation not in ('cell', 'spatial'):
+            raise ValueError('Confirmation must be cell or spatial')
+        self.confirmation = confirmation
         self.record_visited_centres = record_visited_centres
         self.lock = Lock()
         self.reset('waiting')
@@ -46,6 +49,8 @@ class LiveMap:
         self.last_received = None
         self.last_pose_at = self.last_ranges_at = None
         self.hit_history = {}
+        self.hit_stamps = {}
+        self.last_hit_stamp = None
         self.confirmed_at = {}
         self.recent_hits = deque(maxlen=400)
         self.recent_observations = deque(maxlen=400)
@@ -98,6 +103,7 @@ class LiveMap:
                         if cell is not None:
                             self.scores[cell], self.updated[cell] = -4, now
                             self.hit_history.pop(cell, None)
+                            self.hit_stamps.pop(cell, None)
                             self.confirmed_at.pop(cell, None)
                 return
             if name != 'cf2_ranges':
@@ -149,6 +155,7 @@ class LiveMap:
                     self.updated[cell] = now
                     if cell in free and self.scores[cell] <= 0:
                         self.hit_history.pop(cell, None)
+                        self.hit_stamps.pop(cell, None)
                         self.confirmed_at.pop(cell, None)
                 if not obstacle:
                     self.stats['free_rays'] += 1
@@ -159,6 +166,9 @@ class LiveMap:
                 history.append(now)
                 if len(history) >= 4 and history[-1]-history[0] >= .6:
                     self.confirmed_at[target] = now
+                stamp_seconds = row['timestamp_ms']/1000
+                self.last_hit_stamp = stamp_seconds
+                self.hit_stamps.setdefault(target, deque(maxlen=32)).append(stamp_seconds)
                 self.recent_hits.append((now, *end))
                 self.recent_observations.append({'time': now, 'endpoint': end, 'observer': start})
                 self.stats['hits'] += 1
@@ -175,8 +185,25 @@ class LiveMap:
                 history = self.hit_history.get(i)
                 confirmed = bool(history and len(history) >= 4 and
                                  history[-1]-history[0] >= .6 and now-history[-1] <= 1)
+                if self.confirmation == 'spatial' and value == 100 and i in self.hit_stamps:
+                    # Confirm measured cells only. Nearby returns support a local
+                    # surface, but never paint an unobserved gap or solid interior.
+                    support = set()
+                    x, y = i % self.width, i // self.width
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            cx, cy = x+dx, y+dy
+                            if not (0 <= cx < self.width and 0 <= cy < self.width):
+                                continue
+                            j = cy*self.width+cx
+                            if grid[j] != 100:
+                                continue
+                            support.update(t for t in self.hit_stamps.get(j, ())
+                                if 0 <= self.last_hit_stamp-t <= 2)
+                    confirmed = (now-self.last_ranges_at <= 2 and len(support) >= 3 and
+                                 max(support)-min(support) >= .099999)
                 if confirmed:
-                    self.confirmed_at[i] = history[-1]
+                    self.confirmed_at[i] = now if self.confirmation == 'spatial' else history[-1]
                 confirmed = (i in self.confirmed_at and
                              (self.retain_observations or now-self.confirmed_at[i] <= self.persistent_seconds))
                 persistent.append(100 if value == 100 and confirmed else (-1 if value == 100 else value))
@@ -184,7 +211,7 @@ class LiveMap:
                 self.recent_hits.popleft()
             while self.recent_observations and now-self.recent_observations[0]['time'] > 1.2:
                 self.recent_observations.popleft()
-            return {'free_radius_m': self.free_radius, 'recent_observations': list(self.recent_observations), 'session_id': self.session, 'frame': f'cf2_local_{self.session}',
+            return {'confirmation_method': self.confirmation, 'free_radius_m': self.free_radius, 'recent_observations': list(self.recent_observations), 'session_id': self.session, 'frame': f'cf2_local_{self.session}',
                     'resolution': self.resolution, 'width': self.width, 'height': self.width,
                     'origin': self.origin, 'data': grid, 'pose': self.pose,
                     'presentation_data': persistent,

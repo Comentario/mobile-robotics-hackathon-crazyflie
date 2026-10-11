@@ -69,9 +69,11 @@ Free-space reveal and occupied returns are deliberately separate:
 - No white cells are painted behind an obstacle.
 - Blue is unknown; the full flight trail persists for the session.
 
-Black tiles still use the existing repeated-hit confidence filter. Recent hits
-are orange, so a sparse or unconfirmed obstacle may be present in the raw map
-before becoming black. This is not a complete object contour or a certified
+Black tiles use local surface confirmation: three distinct sensor timestamps
+spanning at least 0.10 s support a measured occupied cell and its immediate
+neighbors, within a two-second sensor-time window. Unknown cells are never
+filled by this filter. Orange tiles retain measured occupied cells that are
+not yet confirmed; larger orange points show recent range endpoints. This is not a complete object contour or a certified
 CF1 navigation map. Each height is only a horizontal observation plane.
 
 ## Debug without RViz
@@ -94,3 +96,23 @@ the incremental map. These numbers are software results, not physical accuracy.
 The same scenarios with ideal continuous yaw at 8 degrees/s also completed
 28/28 endpoints and returned: 87.4% observed without internal obstacles and
 83.8% with static boxes. This comparison excludes Flow drift during rotation.
+
+## Denser static-surface demonstration
+
+```bash
+bash scripts/cf2_sim_rviz.sh --scenario obstacles --spacing 0.25 --reveal-radius 0.4 --yaw-rate 8
+```
+
+Closer lanes and 40 cm free-space rays increase measured area. Obstacle detection
+remains at the previous range; reducing it would discard useful surface samples.
+The support filter uses sensor timestamps, so accelerating playback does not
+change its confidence requirements. This is surface evidence, not sensor
+calibration, shape completion or reconstruction of an object's solid interior.
+Blue inside or behind an opaque object may legitimately remain unknown.
+The physical Flow-deck behavior during yaw still requires separate validation.
+
+Surface-confirmation comparison on identical ideal static geometry: raw occupied
+cells stayed at 263, while black confirmed cells increased from 31 to 263.
+The denser 0.25 m lane / 0.40 m reveal / 8 degree/s yaw profile completed
+38/38 endpoints, returned home and observed 91.1% of the configured area.
+No unknown cells were filled as obstacles by the confirmation filter.

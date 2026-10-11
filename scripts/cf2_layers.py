@@ -29,13 +29,14 @@ def validate_heights(heights):
 
 class LayeredMap:
     def __init__(self, heights=(.3,), width=160, resolution=.05, tolerance=.045,
-                 decay_seconds=600, persistent_seconds=600, retain_observations=True, mapping_radius=.8, free_radius=None):
+                 decay_seconds=600, persistent_seconds=600, retain_observations=True, mapping_radius=.8, free_radius=None, confirmation='spatial'):
         self.heights = validate_heights(heights)
         self.width, self.resolution, self.tolerance = width, resolution, tolerance
         self.decay_seconds, self.persistent_seconds = decay_seconds, persistent_seconds
         self.retain_observations = retain_observations
         self.mapping_radius = mapping_radius
         self.free_radius = self.default_free_radius = free_radius
+        self.confirmation = confirmation
         self.lock = RLock()
         self.reset('waiting')
 
@@ -58,7 +59,7 @@ class LayeredMap:
                 self.maps[z] = LiveMap(self.resolution, self.width, z-self.tolerance,
                     z+self.tolerance, decay_seconds=self.decay_seconds,
                     persistent_seconds=self.persistent_seconds, retain_observations=self.retain_observations,
-                    mapping_radius=self.mapping_radius, record_visited_centres=True, free_radius=self.free_radius)
+                    mapping_radius=self.mapping_radius, record_visited_centres=True, free_radius=self.free_radius, confirmation=self.confirmation)
                 self.maps[z].reset(self.session)
                 self.maps[z].origin = self.grid_origin
                 self.maps[z].start = self.start

@@ -112,8 +112,10 @@ previous occupancy; time alone does not erase the map during the session.
 A new session resets it to avoid mixing different EKF frames.
 
 The presentation clips cells to the rectangle. Nearby outside obstacles may
-still affect planning. Confirmed occupancy requires four returns spanning
-0.6 s; it is a confidence filter, not a static/dynamic object classifier.
+still affect planning. Layered-map presentation now confirms measured occupied cells using local
+neighbor support at three distinct sensor timestamps spanning at least 0.10 s.
+It never fills unknown cells. The primitive legacy cell mode still requires
+four returns spanning 0.6 s. Neither is an object-shape classifier.
 The conservative raw export retains occupied evidence even before visual
 confirmation. Flow drift, sparse ranging and altitude-specific occlusion
 remain physical accuracy limits.
