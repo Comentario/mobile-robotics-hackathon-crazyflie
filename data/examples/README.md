@@ -23,17 +23,23 @@ as a collision-free route. Unknown space is not established free space.
 use these coordinates as Lighthouse coordinates without frame alignment and
 physical validation. This final snapshot is not a replay telemetry recording.
 
-## Before a physical test
+## Latest shared physical flight
 
-The ideal simulator uses a fixed vertical sweep and local detours. The physical
-`cf2_first_hover.py` still defaults to adaptive `--coverage-mode explore`;
-its `survey` mode is an older coverage workflow. The simulator's short reveal
-radius is not currently a physical-flight CLI setting. Therefore running the
-previous flight command does not reproduce this simulation.
+- [Physical map](cf2_flight_8710eab2f152_map.json): exact original export.
+- [Diagnostic](cf2_flight_8710eab2f152_diagnostic.json): sensor counts and stop reason.
+- This flight completed 17/28 targets and returned after the 180-second survey
+  budget. Measured observed area: 23.7%. All four lateral directions produced
+  some usable distances; none of the samples had four simultaneously usable.
+- No estimated XY pose samples crossed the survey rectangle.
+- The scheduled route including home approach/return is 41.38 m: at 0.15 m/s
+  its ideal lower-bound duration is 275.84 seconds, before controller delays.
+  Increasing a budget requires establishing real battery endurance first.
+- The map is partial, session-local and not validated for CF1. Lighthouse frame
+  alignment remains required. No occupied survey cells does not establish that
+  unknown cells are free. Virtual flight boundaries are not measured walls.
 
-Before an equivalent full-area trial, unify the fixed-sweep workflow and its
-map settings between simulation and flight, then validate a short hardware run.
-The simulator does not validate Flow drift, radio latency, actuator response,
-flight endurance or landing. Check upward/downward ranges on the real aircraft:
-a previous physical run ended with `vertical_envelope` and an upward reading of
-2 mm. Keep the existing flight protections while investigating that reading.
+`data/examples/` is tracked by Git. `data/runs/` remains ignored for local
+recordings; .gitignore does not delete those files. Team members can switch to
+`integration/cf2-navigation-mapping` and pull to obtain both exports. The
+simulation above is distinct from the physical map; do not substitute one for
+the other during real navigation.

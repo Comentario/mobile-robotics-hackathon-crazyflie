@@ -1,0 +1,30 @@
+{
+  "session_id": "8710eab2f152",
+  "source_recording": "data/runs/cf2_flight_8710eab2f152.jsonl",
+  "map_sha256": "acba3884c94f2c6ec1512c9caba35b62da2d8c6695697b19ad97b30edb6fdc9e",
+  "airborne_range_samples": 3613,
+  "usable_returns": {
+    "front": 60,
+    "left": 390,
+    "back": 590,
+    "right": 666
+  },
+  "simultaneously_usable": {
+    "0": 2323,
+    "1": 884,
+    "2": 396,
+    "3": 10,
+    "4": 0
+  },
+  "visited_targets": 17,
+  "scheduled_targets": 28,
+  "observed_percent": 23.7,
+  "finish_reason": "survey_partial_returned",
+  "unresolved_reason": "survey_budget",
+  "budget_seconds": 180,
+  "scheduled_route_length_m": 41.37647413609464,
+  "ideal_route_time_seconds_at_0_15_mps": 275.84316090729766,
+  "estimated_xy_outside_samples": 0,
+  "map_validated_for_drone1": false,
+  "interpretation": "All four directions produced usable distances, not proof of continuous sensor validity. Empty observed occupancy is not proof of an obstacle-free environment. Route timing excludes pauses and does not establish battery endurance."
+}
