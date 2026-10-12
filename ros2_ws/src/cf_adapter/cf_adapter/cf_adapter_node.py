@@ -30,6 +30,7 @@ class CrazyflieAdapter(Node):
             'streaming_valid_ms': 100, 'map_frame': 'map', 'base_frame': 'base_link',
             'source_frame': 'world', 'state_source': 'odom', 'odom_topic': '',
             'pose_topic': '', 'scan_topic': '', 'vertical_ranges_topic': '',
+            'flow_only': False,
             'state_timeout': 0.3, 'range_timeout': 0.3, 'command_timeout': 0.5,
             'service_timeout': 2.0, 'reference_initial_dt': 0.05, 'reference_max_dt': 0.1,
             'odom_linear_frame': 'body', 'odom_angular_units': 'radians',
@@ -141,12 +142,28 @@ class CrazyflieAdapter(Node):
                 self._pose_callback(pose)
 
     def _vertical_callback(self, msg):
+        if self.flow_only:
+            if len(msg.values) != 1 or not self._fresh(msg.header.stamp, self.range_timeout):
+                return
+            output = MultiRange()
+            output.header = copy.deepcopy(msg.header)
+            output.header.frame_id = self.base_frame
+            output.range_min, output.range_max = 0.01, 4.0
+            for name in ('front', 'back', 'left', 'right', 'up', 'down'):
+                setattr(output, name, float('nan'))
+            value = float(msg.values[0]) / 1000.0
+            output.down = (float('inf') if value > output.range_max else
+                           float('-inf') if value < output.range_min else value)
+            self.ranges_pub.publish(output)
+            return
         # Custom logging vars must be exactly [range.up, range.zrange], in mm.
         if len(msg.values) != 2 or not self._fresh(msg.header.stamp, self.range_timeout):
             return
         self.vertical = (copy.deepcopy(msg.header.stamp), tuple(float(value) / 1000 for value in msg.values))
 
     def _scan_callback(self, msg):
+        if self.flow_only:
+            return
         if msg.header.frame_id not in (self.robot_name.strip('/'), self.base_frame):
             return
         if not self._fresh(msg.header.stamp, self.range_timeout):

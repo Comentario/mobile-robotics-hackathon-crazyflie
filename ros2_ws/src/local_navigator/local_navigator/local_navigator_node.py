@@ -18,13 +18,14 @@ import math
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 
 from hackathon_interfaces.msg import MultiRange, Setpoint, MissionStatus
 
 from .avoidance import AvoidanceConfig, reactive_correction
 from .follower import direct_position_setpoint
+from .route_follower import RouteFollower
 
 
 class LocalNavigator(Node):
@@ -41,6 +42,9 @@ class LocalNavigator(Node):
         self.goal = None
         self.goal_stamp = None
         self.ranges = None
+        self.route = RouteFollower(self.route_point_tolerance)
+        self.path_stamp = None
+        self.create_subscription(Path, '/hk/path/processed', self._path_callback, 10)
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -87,6 +91,10 @@ class LocalNavigator(Node):
         self.declare_parameter('max_speed', 0.5)
         self.declare_parameter('z_nominal', 0.5)
         self.declare_parameter('goal_timeout', 0.5)
+        self.use_planned_path = self.declare_parameter('use_planned_path', False).value
+        self.path_timeout = self.declare_parameter('path_timeout', 0.5).value
+        self.route_point_tolerance = self.declare_parameter('route_point_tolerance', 0.03).value
+        self.path_start_tolerance = self.declare_parameter('path_start_tolerance', 0.15).value
         self.state_timeout = self.declare_parameter('state_timeout', 0.3).value
         self.range_timeout = self.declare_parameter('range_timeout', 0.3).value
         self.base_frame = self.declare_parameter('base_frame', 'base_link').value
@@ -149,6 +157,9 @@ class LocalNavigator(Node):
 
         if self.goal_timeout <= 0.0:
             raise ValueError('goal_timeout must be positive')
+        if not all(math.isfinite(v) and v > 0 for v in
+                   (self.path_timeout, self.route_point_tolerance, self.path_start_tolerance)):
+            raise ValueError('Path timeouts and tolerances must be finite and positive')
 
     def _now(self):
         return self.get_clock().now().nanoseconds / 1e9
@@ -207,12 +218,46 @@ class LocalNavigator(Node):
             )
             return
 
-        self.goal = tuple(
+        new_goal = tuple(
             float(value)
             for value in values
         )
-
+        if new_goal != self.goal:
+            self.route.clear()
+            self.path_stamp = None
+        self.goal = new_goal
         self.goal_stamp = self._stamp(msg)
+
+    def _path_callback(self, msg):
+        if not self.use_planned_path:
+            return
+        points = tuple((p.pose.position.x, p.pose.position.y, p.pose.position.z)
+                       for p in msg.poses)
+        valid = (msg.header.frame_id == self.map_frame
+                 and 0 <= self._now()-self._stamp(msg) <= self.path_timeout
+                 and self.goal is not None and bool(points)
+                 and all(all(math.isfinite(v) for v in p) for p in points))
+        if valid:
+            valid = (math.dist(points[-1], self.goal) <= 1e-4
+                     and all(abs(p[2]-self.z_nominal) <= 1e-4 for p in points))
+        if valid and points != self.route.points:
+            valid = (self.position is not None and
+                     math.dist(points[0][:2], self.position[:2]) <= self.path_start_tolerance)
+        if not valid:
+            self.route.clear()
+            self.path_stamp = None
+            return
+        self.route.set_path(points)
+        self.path_stamp = self._stamp(msg)
+
+    def _publish_path_wait(self):
+        msg = Setpoint()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.map_frame
+        msg.mode = Setpoint.MODE_HOVER
+        msg.position.x, msg.position.y, msg.position.z = self.position
+        msg.yaw = self.current_yaw
+        self.command_pub.publish(msg)
 
     def _ranges_callback(self, msg):
         """Store the latest horizontal range measurements."""
@@ -280,6 +325,14 @@ class LocalNavigator(Node):
         if not 0 <= goal_age <= self.goal_timeout:
             return
 
+        navigation_target = self.goal
+        if self.use_planned_path:
+            if (self.path_stamp is None or not 0 <= self._now()-self.path_stamp <= self.path_timeout
+                    or not self.route.points):
+                self._publish_path_wait()
+                return
+            navigation_target = self.route.target(self.position)
+
         max_step = (
             self.nominal_speed
             / self.control_rate
@@ -287,7 +340,7 @@ class LocalNavigator(Node):
 
         follower_target = direct_position_setpoint(
             position=self.position,
-            goal=self.goal,
+            goal=navigation_target,
             max_step=max_step,
             z_nominal=self.z_nominal,
         )
