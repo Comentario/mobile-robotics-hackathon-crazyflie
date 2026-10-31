@@ -88,8 +88,9 @@ class LocalNavigator(Node):
         self.mission_active = False
         self.last_state_monotonic = None
         # CF1 cooperative route: ordered tracking of an offline-planned path.
-        self.route = RouteFollower(self.route_point_tolerance)
+        self.route = RouteFollower(self.route_point_tolerance, self.path_start_tolerance)
         self.path_stamp = None
+        self.route_yaw = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -758,11 +759,18 @@ class LocalNavigator(Node):
             current_z=self.position[2],
         )
 
-        yaw = yaw_towards(
-            position=self.position,
-            target=navigation_target,
-            current_yaw=self.current_yaw,
-        )
+        if self.use_planned_path:
+            # Route points are a few cm apart: facing each one makes the yaw
+            # swing and fakes range closing rates. Hold the initial heading.
+            if self.route_yaw is None:
+                self.route_yaw = self.current_yaw
+            yaw = self.route_yaw
+        else:
+            yaw = yaw_towards(
+                position=self.position,
+                target=navigation_target,
+                current_yaw=self.current_yaw,
+            )
 
         msg = Setpoint()
 
