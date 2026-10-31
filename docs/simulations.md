@@ -104,3 +104,64 @@ Para que los resultados del nivel 1 sirvan de algo:
 - **Dinámica:** límites de velocidad y aceleración; respuesta de primer orden al setpoint.
 - **Watchdog:** si no llegan setpoints durante `command_watchdog`, hover. Ajustar al comportamiento real del firmware en cuanto se confirme (TP-08).
 - **Colisión:** si la pose real toca un obstáculo, se cuenta y se publica; el escenario falla con `max_collisions: 0`.
+
+## MVP integrado de las tres personas (rama integration-mvp-crazyswarm)
+
+Se conserva el cf_adapter de main, se incorporan percepción y seguridad de persona 2,
+y misión/navegación de persona 3. Todos usan reloj ROS para datos y control;
+`time.monotonic()` solo limita esperas del script de prueba. En SIL todos consumen `/clock`.
+El navegador propone velocidad XY con altura del waypoint; cf_adapter genera FullState.
+`/hk/safety_state` comunica estado; `/hk/cmd/safe` comunica órdenes: son mensajes distintos.
+Los planners y telemetría siguen siendo esqueletos; el MVP usa la ruta directa.
+
+En Ubuntu 24.04/ROS Jazzy, desde la raíz del repositorio:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+bash scripts/build.sh
+source ros2_ws/install/setup.bash
+export ROS_DOMAIN_ID=93
+export ROS_LOCALHOST_ONLY=1
+python3 scripts/verify_mvp_integration.py
+python3 scripts/verify_mvp_integration.py --scenario T02_multi_waypoint
+```
+
+Ambas pruebas arrancan y cierran los nodos, esperan salud/seguridad normales,
+inician la misión por servicio y comprueban llegada, aterrizaje, frames, tópicos
+observados y publisher único. Logs en `/tmp/hk_mvp_emulator_*.log`.
+Para observar el sistema y abrir rqt_graph/RViz por separado:
+
+```bash
+ros2 launch hackathon_bringup simulation_cf.launch.py backend:=emulator scenario:=T01_single_waypoint
+```
+
+### Crazyswarm2 SIL con sensores sintéticos
+
+Requiere `crazyflie_sim`, backend `np` y bindings `cffirmware` compilados para la
+versión de Python/ROS de esa máquina. No copiar binarios de Humble a Jazzy.
+En un primer terminal, tras cargar ROS y el workspace, y exportar el mismo dominio:
+
+```bash
+# Si cffirmware no está instalado en Python, añadir su directorio build a PYTHONPATH.
+python3 scripts/run_crazyswarm_sil.py --scenario T01_single_waypoint
+```
+
+El script usa el servidor instalado y su descripción URDF, habilita únicamente
+cf231 y TF, establece la posición inicial del escenario y publica /clock.
+En otro terminal con el mismo entorno:
+
+```bash
+python3 scripts/verify_mvp_integration.py --backend sil --timeout 300
+# O ejecución visible y autostart:
+ros2 launch hackathon_bringup simulation_cf.launch.py backend:=sil scenario:=T01_single_waypoint
+```
+
+Usar el mismo escenario en ambos terminales. Para T02 reiniciar el servidor con
+`--scenario T02_multi_waypoint` y pasar ese argumento también al verificador.
+La simulación SIL instalada no implementa emergency ni notify_setpoints_stop:
+la prueba de misión no certifica esos servicios ni el watchdog real.
+La compatibilidad final con ROS Jazzy debe validarse en el equipo de persona 2.
+
+Validación local (ROS Humble, 2026-10-08): 14 paquetes compilados; 147 tests
+aprobados y 19 pendientes/omitidos; T01 y T02 completados con emulator,
+T01 completado con Crazyswarm2 SIL. Esto no sustituye la ejecución en Jazzy.

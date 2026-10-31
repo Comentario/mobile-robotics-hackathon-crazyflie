@@ -89,3 +89,10 @@ def test_all_repository_worlds_load():
     for path in files:
         world = World.from_dict(yaml.safe_load(path.read_text()))
         assert world.ceiling > 0
+
+
+def test_rangers_rotate_with_roll_and_pitch(room):
+    q=(0,math.sin(math.pi/4),0,math.cos(math.pi/4))
+    ranges=sample_ranges(room,DroneState(z=1),0,.02,4,orientation=q)
+    assert ranges['front']==pytest.approx(.98)
+    assert ranges['up']==pytest.approx(1.96)

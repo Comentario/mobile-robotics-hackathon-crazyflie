@@ -4,7 +4,12 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 set +u  # setup.bash de ROS usa variables sin definir
-source /opt/ros/humble/setup.bash
+ROS_SETUP="/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
+if [[ ! -f "$ROS_SETUP" ]]; then
+  echo "No existe $ROS_SETUP; define ROS_DISTRO o carga ROS antes de compilar." >&2
+  exit 1
+fi
+source "$ROS_SETUP"
 set -u
 cd "$REPO/ros2_ws"
 colcon build --symlink-install "$@"
