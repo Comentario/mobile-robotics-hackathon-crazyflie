@@ -47,6 +47,7 @@ from .follower import (
     lookahead_point,
     yaw_towards,
 )
+from .route_follower import RouteFollower
 from .speed_policy import navigation_speed
 
 
@@ -86,6 +87,9 @@ class LocalNavigator(Node):
         self.localization_status = None
         self.mission_active = False
         self.last_state_monotonic = None
+        # CF1 cooperative route: ordered tracking of an offline-planned path.
+        self.route = RouteFollower(self.route_point_tolerance)
+        self.path_stamp = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -165,6 +169,10 @@ class LocalNavigator(Node):
         self.declare_parameter('z_min', 0.0)
         self.declare_parameter('z_max', 1.5)
         self.declare_parameter('goal_timeout', 0.5)
+        self.use_planned_path = self.declare_parameter('use_planned_path', False).value
+        self.path_timeout = self.declare_parameter('path_timeout', 0.5).value
+        self.route_point_tolerance = self.declare_parameter('route_point_tolerance', 0.03).value
+        self.path_start_tolerance = self.declare_parameter('path_start_tolerance', 0.15).value
         self.declare_parameter('map_frame', 'map')
         self.state_timeout = float(self.declare_parameter('state_timeout', 0.3).value)
         self.range_timeout = float(self.declare_parameter('range_timeout', 0.3).value)
@@ -293,6 +301,9 @@ class LocalNavigator(Node):
 
         if self.goal_timeout <= 0.0:
             raise ValueError('goal_timeout must be positive')
+        if not all(math.isfinite(v) and v > 0 for v in
+                   (self.path_timeout, self.route_point_tolerance, self.path_start_tolerance)):
+            raise ValueError('Path timeouts and tolerances must be finite and positive')
 
     def _state_callback(self, msg):
         """Store the latest normalized vehicle state."""
@@ -347,6 +358,10 @@ class LocalNavigator(Node):
             for value in values
         )
 
+        if new_goal != self.goal:
+            self.route.clear()
+            self.path_stamp = None
+
         if (
             self.goal is not None
             and new_goal != self.goal
@@ -362,6 +377,10 @@ class LocalNavigator(Node):
 
     def _path_callback(self, msg):
         """Store the latest processed global path."""
+        if self.use_planned_path:
+            self._route_path_callback(msg)
+            return
+
         if msg.header.frame_id not in ('', self.map_frame):
             self.get_logger().warn(
                 f'Ignoring processed path in frame '
@@ -398,6 +417,43 @@ class LocalNavigator(Node):
 
         self.processed_path_received = True
         self.processed_path = points
+
+    def _now(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    @staticmethod
+    def _stamp(msg):
+        return msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+    def _route_path_callback(self, msg):
+        """Accept a fresh, complete cooperative route that ends at the goal."""
+        points = tuple((p.pose.position.x, p.pose.position.y, p.pose.position.z)
+                       for p in msg.poses)
+        valid = (msg.header.frame_id == self.map_frame
+                 and 0 <= self._now()-self._stamp(msg) <= self.path_timeout
+                 and self.goal is not None and bool(points)
+                 and all(all(math.isfinite(v) for v in p) for p in points))
+        if valid:
+            valid = (math.dist(points[-1], self.goal) <= 1e-4
+                     and all(abs(p[2]-self.z_nominal) <= 1e-4 for p in points))
+        if valid and points != self.route.points:
+            valid = (self.position is not None and
+                     math.dist(points[0][:2], self.position[:2]) <= self.path_start_tolerance)
+        if not valid:
+            self.route.clear()
+            self.path_stamp = None
+            return
+        self.route.set_path(points)
+        self.path_stamp = self._stamp(msg)
+
+    def _publish_path_wait(self):
+        msg = Setpoint()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.map_frame
+        msg.mode = Setpoint.MODE_HOVER
+        msg.position.x, msg.position.y, msg.position.z = self.position
+        msg.yaw = self.current_yaw
+        self.command_pub.publish(msg)
 
     def _ranges_callback(self, msg):
         """Store ranges and estimate horizontal obstacle closing speeds."""
@@ -551,6 +607,18 @@ class LocalNavigator(Node):
             self.rate_limiter.reset()
             self.last_control_monotonic = None
             return
+
+        if self.use_planned_path:
+            # CF1 cooperative route: hover until a fresh route is accepted,
+            # then follow its points in order instead of a lookahead shortcut.
+            if (self.path_stamp is None or not 0 <= self._now()-self.path_stamp <= self.path_timeout
+                    or not self.route.points):
+                self.rate_limiter.reset()
+                self.last_control_monotonic = None
+                self._publish_path_wait()
+                return
+            navigation_target = self.route.target(self.position)
+            final_goal = self.route.points[-1]
 
         distance_to_goal = math.hypot(
             final_goal[0] - self.position[0],

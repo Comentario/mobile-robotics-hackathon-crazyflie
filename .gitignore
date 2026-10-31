@@ -49,3 +49,5 @@ desktop.ini
 # Datos locales (ver data/README.md)
 data/bags/
 data/runs/
+.mcp.json
+.vscode/mcp.json
