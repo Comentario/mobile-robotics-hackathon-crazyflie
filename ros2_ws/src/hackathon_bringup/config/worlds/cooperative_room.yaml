@@ -1,0 +1,6 @@
+# Sala para T17: la ruta cooperativa (x -1.5..1.575, y -0.6..0.8) queda a >= 1 m
+# de las paredes, como en el área que mapeó el CF2. El geofence del supervisor
+# (±2 m) sigue limitando el vuelo. Formato: simulation_adapter/world.py
+bounds: [-2.6, -2.0, 2.6, 2.0]
+ceiling: 2.0
+obstacles: []

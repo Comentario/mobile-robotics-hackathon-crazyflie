@@ -1,7 +1,7 @@
 # Ruta cooperativa CF2 → CF1: el CF1 sigue, tramo a tramo, la ruta planificada
 # offline sobre el mapa sintético del CF2 (scripts/generate_polygon_preview.py).
 # Solo simulation_cf.launch.py usa `route`. Formato: docs/simulations.md.
-world: worlds/empty.yaml
+world: worlds/cooperative_room.yaml
 mission: missions/cooperative_synthetic.yaml
 route: data/examples/cooperative_polygon/route_proposal.json
 start: [0.03, -0.09, 0.0, 0.0]   # x, y, z, yaw: inicio de la ruta
