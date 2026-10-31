@@ -7,6 +7,7 @@ Para sil todos los nodos usan /clock. No inicia radio ni hardware.
 Ruta cooperativa CF2 → CF1: route:=<ruta.json> (o la clave `route` del escenario)
 sustituye global_planner/path_processor por scripts/cooperative_route.py y activa
 use_planned_path en local_navigator, a la altura de navegación de la ruta.
+rviz:=true muestra el mapa del CF2, la ruta y la trayectoria volada (scripts/route_view.py).
 """
 import json
 import os
@@ -79,6 +80,14 @@ def setup(context):
         if not os.path.isfile(server): raise FileNotFoundError(f'No existe {server}; usar route_server:=')
         cmd=['python3',server,'--route',route_path]+(['--allow-synthetic'] if route.get('simulation') else [])
         nodes.append(ExecuteProcess(cmd=cmd,name='cooperative_route',output='screen'))
+    if arg('rviz')=='true':
+        # Mapa del CF2, ruta planificada, tramo actual y trayectoria volada; cerrar RViz detiene todo.
+        view=['python3',os.path.join(repo_root(),'scripts','route_view.py')]+(['--route',route_path] if route is not None else [])
+        nodes.append(ExecuteProcess(cmd=view,name='route_view',output='screen'))
+        rviz_config=os.path.join(get_package_share_directory('hackathon_bringup'),'rviz','cf1_route.rviz')
+        # Render por software: evita problemas de GPU/shaders en WSLg.
+        nodes.append(Node(package='rviz2',executable='rviz2',arguments=['-d',rviz_config],
+                          additional_env={'LIBGL_ALWAYS_SOFTWARE':'1','QT_QPA_PLATFORM':'xcb'}))
     nodes+=static_sensor_tfs(config,shared_frames(params))
     from launch.actions import RegisterEventHandler
     from launch.event_handlers import OnShutdown
@@ -101,4 +110,6 @@ def generate_launch_description():
                               description='Ruta cooperativa JSON (plan_shared_map / generate_polygon_preview)'),
         DeclareLaunchArgument('route_server',default_value='',
                               description='Ruta a cooperative_route.py si no está en <repo>/scripts'),
+        DeclareLaunchArgument('rviz',default_value='false',
+                              description='true: RViz con mapa del CF2, ruta y trayectoria volada'),
         OpaqueFunction(function=setup)])
