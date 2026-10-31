@@ -30,7 +30,7 @@ class CrazyflieAdapter(Node):
             'streaming_valid_ms': 100, 'map_frame': 'map', 'base_frame': 'base_link',
             'source_frame': 'world', 'state_source': 'odom', 'odom_topic': '',
             'pose_topic': '', 'scan_topic': '', 'vertical_ranges_topic': '',
-            'flow_only': False,
+            'flow_only': False, 'flow_range_min': 0.01, 'flow_range_max': 4.0,
             'state_timeout': 0.3, 'range_timeout': 0.3, 'command_timeout': 0.5,
             'service_timeout': 2.0, 'reference_initial_dt': 0.05, 'reference_max_dt': 0.1,
             'odom_linear_frame': 'body', 'odom_angular_units': 'radians',
@@ -48,6 +48,11 @@ class CrazyflieAdapter(Node):
                 raise ValueError(f'{name} must be finite and positive')
         if not math.isfinite(self.land_height) or self.land_height < 0:
             raise ValueError('Invalid landing height')
+        if not (math.isfinite(self.flow_range_min) and math.isfinite(self.flow_range_max)
+                and 0 <= self.flow_range_min < self.flow_range_max):
+            raise ValueError('Invalid Flow range limits')
+        if self.flow_only and not self.vertical_ranges_topic:
+            raise ValueError('flow_only requires vertical_ranges_topic')
         self.reference = ReferenceTranslator(self.reference_initial_dt, self.reference_max_dt)
         twist_transform((0, 0, 0, 1), self.odom_linear_frame, self.odom_angular_units)
         self.latest_state = None
@@ -148,12 +153,12 @@ class CrazyflieAdapter(Node):
             output = MultiRange()
             output.header = copy.deepcopy(msg.header)
             output.header.frame_id = self.base_frame
-            output.range_min, output.range_max = 0.01, 4.0
+            output.range_min, output.range_max = self.flow_range_min, self.flow_range_max
             for name in ('front', 'back', 'left', 'right', 'up', 'down'):
                 setattr(output, name, float('nan'))
             value = float(msg.values[0]) / 1000.0
-            output.down = (float('inf') if value > output.range_max else
-                           float('-inf') if value < output.range_min else value)
+            output.down = (float('inf') if value > self.flow_range_max else
+                           float('-inf') if value < self.flow_range_min else value)
             self.ranges_pub.publish(output)
             return
         # Custom logging vars must be exactly [range.up, range.zrange], in mm.

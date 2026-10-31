@@ -382,3 +382,15 @@ usan reloj ROS; en SIL se configura use_sim_time=true por nodo.
 
 Ver instrucciones reproducibles en [simulations.md](simulations.md) y límites
 de sensores en [sensor_model.md](sensor_model.md).
+
+
+### Hardware Lighthouse + Flow, sin Multi-ranger
+
+Para cf_adapter configurar `flow_only: true` y
+`vertical_ranges_topic: /cf231/ranges_extra`; el logging debe contener solo
+`[range.zrange]` en mm. Publica `/hk/adapter/ranges` desde cada medida vertical
+reciente, sin depender de scan: `down` en metros, demás sensores NaN.
+`flow_range_min` (0.01 m) y `flow_range_max` (4.0 m) delimitan la clasificación
+REP-117. Ignora scan en este modo. El modo por defecto sigue usando scan y
+logging `[range.up, range.zrange]`. No elimina la exigencia de rangos del
+supervisor ni habilita evasión de obstáculos sin sensores horizontales.
