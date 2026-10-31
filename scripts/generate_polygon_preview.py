@@ -15,8 +15,8 @@ from plan_shared_map import inflate, plan, publish
 POLYGON = [(2.24, -1.03), (2.16, 1.03), (-1.75, .85), (-1.60, -.60)]
 OBSTACLE = (-.115, .615, .385, .815)  # xmin, ymin, xmax, ymax
 WAYPOINTS = [[1.43, -.6, .8], [1.57, .8, .8], [-1.3, .63, .8],
-             [-1.5, -.02, .8], [.03, -.09, .8]]
-START = [.0, .0, .8]  # Synthetic start, not a measurement of B.
+             [-1.5, 0., .8], [.03, -.09, .8]]
+START = [.03, -.09, .8]  # Synthetic start, not a measurement of B.
 GEOFENCE = (-2., -2., 2., 2.)  # Match B's existing configured XY envelope.
 
 
