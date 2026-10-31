@@ -46,13 +46,17 @@ def static_sensor_tfs(config_dir, base_frame=None):
     return nodes
 
 
-def stack_nodes(params, mission_file, extra=None):
-    """Nodos del stack. `extra`: parámetros adicionales para todos (p. ej. scenario_name)."""
+def stack_nodes(params, mission_file, extra=None, skip=()):
+    """Nodos del stack. `extra`: parámetros adicionales para todos (p. ej. scenario_name).
+
+    `skip`: paquetes del STACK que no se lanzan (p. ej. el planificador en ruta cooperativa).
+    """
     extra = extra or {}
     nodes = [
         Node(package=pkg, executable=exe, name=pkg, output='screen',
              parameters=params + [extra])
         for pkg, exe in STACK
+        if pkg not in skip
     ]
     nodes.append(Node(
         package='mission_manager', executable='mission_manager_node', name='mission_manager',

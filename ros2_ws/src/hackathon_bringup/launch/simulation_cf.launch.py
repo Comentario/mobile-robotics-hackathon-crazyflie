@@ -3,16 +3,27 @@
 backend:=emulator usa sim_crazyflie (cinemático propio, portable).
 backend:=sil conecta cf_adapter + sim_sensors a Crazyswarm2 externo, backend sim.
 Para sil todos los nodos usan /clock. No inicia radio ni hardware.
+
+Ruta cooperativa CF2 → CF1: route:=<ruta.json> (o la clave `route` del escenario)
+sustituye global_planner/path_processor por scripts/cooperative_route.py y activa
+use_planned_path en local_navigator, a la altura de navegación de la ruta.
 """
+import json
 import os
 import yaml
 import tempfile
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument,OpaqueFunction
+from launch.actions import DeclareLaunchArgument,ExecuteProcess,OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from hackathon_bringup.stack import config_file,param_files,stack_nodes,static_sensor_tfs,shared_frames,stop_on_exit
+
+
+def repo_root():
+    """Raíz del repo desde ros2_ws/install/hackathon_bringup/share/hackathon_bringup."""
+    share=get_package_share_directory('hackathon_bringup')
+    return os.path.normpath(os.path.join(share,*['..']*5))
 
 
 def setup(context):
@@ -20,6 +31,12 @@ def setup(context):
     arg=lambda name: LaunchConfiguration(name).perform(context)
     scenario_path=config_file(config,'scenarios/'+arg('scenario')+'.yaml')
     with open(scenario_path,encoding='utf-8') as stream: scenario=yaml.safe_load(stream)
+    route_path=arg('route') or scenario.get('route','')
+    route=None
+    if route_path:
+        if not os.path.isabs(route_path):
+            route_path=os.path.join(repo_root(),route_path)
+        with open(route_path,encoding='utf-8') as stream: route=json.load(stream)
     params=param_files(config,arg('params'),arg('overlay'))
     backend=arg('backend')
     if backend not in ('emulator','sil'): raise ValueError('backend debe ser emulator o sil')
@@ -42,6 +59,9 @@ def setup(context):
         'vertical_ranges_topic':f'/{robot}/ranges_extra','source_frame':'world'})
     for name in ('sim_crazyflie','sim_sensors'):
         merged[name]['ros__parameters'].update(source)
+    if route is not None:
+        merged['local_navigator']['ros__parameters'].update({
+            'use_planned_path':True,'z_nominal':float(route['navigation_height_m'])})
     with tempfile.NamedTemporaryFile(mode='w',prefix='hk-integrated-',suffix='.yaml',delete=False) as stream:
         yaml.safe_dump(merged,stream); resolved=stream.name
     params=[resolved]
@@ -52,7 +72,13 @@ def setup(context):
                 parameters=params+[common,{'robot_name':robot,'state_source':'pose',
                   'pose_topic':f'/{robot}/pose','scan_topic':f'/{robot}/scan',
                   'vertical_ranges_topic':f'/{robot}/ranges_extra','source_frame':'world'}])]
-    nodes+=stack_nodes(params,config_file(config,scenario['mission']),common)
+    skip=('global_planner','path_processor') if route is not None else ()
+    nodes+=stack_nodes(params,config_file(config,scenario['mission']),common,skip)
+    if route is not None:
+        server=arg('route_server') or os.path.join(repo_root(),'scripts','cooperative_route.py')
+        if not os.path.isfile(server): raise FileNotFoundError(f'No existe {server}; usar route_server:=')
+        cmd=['python3',server,'--route',route_path]+(['--allow-synthetic'] if route.get('simulation') else [])
+        nodes.append(ExecuteProcess(cmd=cmd,name='cooperative_route',output='screen'))
     nodes+=static_sensor_tfs(config,shared_frames(params))
     from launch.actions import RegisterEventHandler
     from launch.event_handlers import OnShutdown
@@ -71,4 +97,8 @@ def generate_launch_description():
         DeclareLaunchArgument('params',default_value='simulation.yaml'),
         DeclareLaunchArgument('overlay',default_value=''),
         DeclareLaunchArgument('robot_name',default_value='cf231'),
+        DeclareLaunchArgument('route',default_value='',
+                              description='Ruta cooperativa JSON (plan_shared_map / generate_polygon_preview)'),
+        DeclareLaunchArgument('route_server',default_value='',
+                              description='Ruta a cooperative_route.py si no está en <repo>/scripts'),
         OpaqueFunction(function=setup)])
