@@ -590,7 +590,10 @@ class LocalNavigator(Node):
                 - self.last_goal_monotonic
             )
 
-            if goal_age > self.goal_timeout:
+            # In route mode freshness is guarded by path_timeout (hover while
+            # stale). mission_manager pauses goals during a safety HOVER, so
+            # requiring a fresh goal here would never let the vehicle recover.
+            if goal_age > self.goal_timeout and not self.use_planned_path:
                 self.rate_limiter.reset()
                 self.last_control_monotonic = None
                 return
