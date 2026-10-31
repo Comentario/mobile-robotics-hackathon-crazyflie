@@ -1,10 +1,73 @@
 # Mobile Robotics Hackathon — Crazyflie Autonomous Navigation
 
-Preparación de nuestro equipo para el reto **Autonomous Navigation** de la Mobile Robotics Hackathon 2026, TU Dresden, 10–11 de octubre de 2026.
+Solución de nuestro equipo para el reto **Autonomous Navigation** de la Mobile Robotics Hackathon 2026, TU Dresden, 10–11 de octubre de 2026: dos Crazyflie que cooperan sobre ROS 2 Humble y Crazyswarm2.
 
-> **Estado de esta rama:** trabajo de Persona 3 para CF2 con Flow + Multiranger, sin Lighthouse: navegación local, evasión, barrido con giro simultáneo y mapa 2D en RViz. Las pruebas físicas anteriores validaron hover y reacción a obstáculos; el perfil nuevo y la precisión del mapa todavía requieren evaluación en hardware. [Ejecución y exportación offline para CF1](docs/cf2_coverage_demo.md).
->
-> **Roadmap detallado (TP-01 a TP-42, prioridades y test matrix):** [docs/roadmap.md](docs/roadmap.md). Completados: TP-01 a TP-10, TP-12 y preparación TP-42 C/E; TP-11 pendiente.
+## Proyecto final: dos drones que cooperan
+
+| | CF1 — navegación | CF2 — mapeo |
+|---|---|---|
+| Decks | Lighthouse + Flow | Flow + Multi-ranger (ToF) |
+| Localización | Lighthouse (frame `map` absoluto) | Flow (odometría relativa a su despegue) |
+| Función | Misión de waypoints con planificación, seguimiento de ruta y supervisor de seguridad | Explora un entorno desconocido y genera un mapa de ocupación 2D |
+| Código principal | `mission_manager`, `local_navigator`, `safety_supervisor`, `cf_adapter` (`flow_only`) | `scripts/cf2_*.py`, `global_planner`, `local_navigator` (evasión TP-34/35/36) |
+| Documentación | [interfaces](docs/interfaces.md), [runbook](docs/hackathon_day_runbook.md) | [cobertura y exportación](docs/cf2_coverage_demo.md), [simulación](docs/cf2_survey_simulation.md) |
+
+### Flujo cooperativo CF2 → CF1
+
+```mermaid
+flowchart LR
+  A[CF2 explora<br/>cf2_survey_sim / vuelo real] --> B[Mapa 2D<br/>cf2_*_map.json + PGM/YAML]
+  B --> C[plan_shared_map.py<br/>alinea frames con poses A/B<br/>A* con holgura, desconocido = bloqueado]
+  C --> D[route.json<br/>tramos por waypoint]
+  D --> E[cooperative_route.py<br/>sirve /hk/path/processed]
+  E --> F[CF1: local_navigator<br/>use_planned_path]
+  F --> G[safety_supervisor] --> H[cf_adapter] --> I[CF1]
+```
+
+El CF2 mapea; el CF1 planifica su ruta sobre ese mapa (nunca trata el espacio desconocido como libre) y la sigue tramo a tramo, en orden, a la altura de la capa medida.
+
+### Cómo ejecutarlo en simulación (sin radio ni hardware)
+
+En Ubuntu 22.04 / WSL 2 con ROS 2 Humble y Crazyswarm2:
+
+```bash
+bash scripts/build.sh && source ros2_ws/install/setup.bash
+
+# CF2: exploración y mapa 2D (con ventanas: bash scripts/cf2_sim_rviz.sh --scenario obstacles)
+python3 scripts/cf2_survey_sim.py --scenario obstacles --headless
+python3 scripts/cf2_export_map.py data/runs/cf2_sim_<sesión>_map.json
+
+# CF1: planificar sobre el mapa del CF2 (referencias A/B: docs/cf2_coverage_demo.md)
+python3 scripts/plan_shared_map.py --map data/runs/cf2_sim_<sesión>_map.json --mission <misión.yaml> \
+  --reference-a <A.json> --reference-b <B.json> --start <x> <y> <z> --robot-radius 0.10 \
+  --output route.json --allow-simulation
+
+# CF1: volar la ruta en el stack completo (API de Crazyswarm2 emulada)
+ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=T17_cooperative_route
+ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=<escenario> route:=route.json
+
+# Verificación de punta a punta (pose → salud → misión → navegación → safety → cf_adapter → aterrizaje)
+python3 scripts/verify_mvp_integration.py --scenario T17_cooperative_route
+```
+
+### Verificación (simulación, 31/10/2026)
+
+| Prueba | Resultado |
+|---|---|
+| `colcon test` (14 paquetes) | 223 tests, 0 fallos (28 omitidos) |
+| Scripts `scripts/test_*.py` (CF2 y ruta cooperativa) | 77 tests, todos pasan |
+| `verify_mvp_integration.py`: T01, T02, T04 | PASS |
+| `verify_mvp_integration.py`: T17 ruta cooperativa | PASS |
+| CF2 `cf2_survey_sim.py` vacío / con obstáculos | 28/28 objetivos, 83,8 % / 82,2 % observado |
+| Bucle completo: mapa del CF2 → `plan_shared_map` → vuelo del CF1 | PASS en ambos mapas (5 tramos, 0,3 m, holgura 0,15 m) |
+
+### Limitaciones conocidas
+
+- **Solo simulación.** El simulador del CF2 es ideal y el emulador del CF1 es cinemático; no modelan deriva del Flow, latencia de radio ni dinámica real. Alinear el mapa del CF2 con el frame Lighthouse requiere las poses medidas A/B del día del vuelo.
+- **Sin implementar desde el inicio del proyecto:** `local_world_model` (mapa de obstáculos propio del CF1), `telemetry` y el evaluador `hackathon_tests/run_scenario`. Por eso `T03_static_wall` (rodear un muro no mapeado con `planner_mode: astar`) falla y `run_all_scenarios.sh` no produce PASS/FAIL. Para el CF1, el conocimiento de obstáculos llega por el mapa del CF2.
+- **Ruta cooperativa:** el CF1 mantiene su orientación inicial y sigue la ruta con un zigzag de unos 10 cm por la grilla de 5 cm, dentro de la holgura. En el emulador, el arranque falló una vez de forma intermitente por llegada tardía de rangos.
+
+> **Historial:** las ramas `tp*`, `integration-mvp-crazyswarm` (CF1) e `integration/cf2-navigation-mapping` (CF2) se conservan como respaldo. El resto de este README es la planificación previa al evento. Roadmap detallado: [docs/roadmap.md](docs/roadmap.md).
 
 ## Objetivo del reto
 
