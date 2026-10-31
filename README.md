@@ -46,6 +46,9 @@ python3 scripts/plan_shared_map.py --map data/runs/cf2_sim_<sesión>_map.json --
 ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=T17_cooperative_route
 ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=<escenario> route:=route.json
 
+# Igual, con RViz: mapa del CF2, ruta planificada (azul), tramo actual (naranja) y trayectoria volada (roja)
+ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=T17_cooperative_route rviz:=true
+
 # Verificación de punta a punta (pose → salud → misión → navegación → safety → cf_adapter → aterrizaje)
 python3 scripts/verify_mvp_integration.py --scenario T17_cooperative_route
 ```
@@ -57,15 +60,16 @@ python3 scripts/verify_mvp_integration.py --scenario T17_cooperative_route
 | `colcon test` (14 paquetes) | 223 tests, 0 fallos (28 omitidos) |
 | Scripts `scripts/test_*.py` (CF2 y ruta cooperativa) | 77 tests, todos pasan |
 | `verify_mvp_integration.py`: T01, T02, T04 | PASS |
-| `verify_mvp_integration.py`: T17 ruta cooperativa | PASS |
+| `verify_mvp_integration.py`: T17 ruta cooperativa | PASS en 10 de 10 corridas seguidas |
 | CF2 `cf2_survey_sim.py` vacío / con obstáculos | 28/28 objetivos, 83,8 % / 82,2 % observado |
 | Bucle completo: mapa del CF2 → `plan_shared_map` → vuelo del CF1 | PASS en ambos mapas (5 tramos, 0,3 m, holgura 0,15 m) |
 
 ### Limitaciones conocidas
 
 - **Solo simulación.** El simulador del CF2 es ideal y el emulador del CF1 es cinemático; no modelan deriva del Flow, latencia de radio ni dinámica real. Alinear el mapa del CF2 con el frame Lighthouse requiere las poses medidas A/B del día del vuelo.
-- **Sin implementar desde el inicio del proyecto:** `local_world_model` (mapa de obstáculos propio del CF1), `telemetry` y el evaluador `hackathon_tests/run_scenario`. Por eso `T03_static_wall` (rodear un muro no mapeado con `planner_mode: astar`) falla y `run_all_scenarios.sh` no produce PASS/FAIL. Para el CF1, el conocimiento de obstáculos llega por el mapa del CF2.
-- **Ruta cooperativa:** el CF1 mantiene su orientación inicial y sigue la ruta con un zigzag de unos 10 cm por la grilla de 5 cm, dentro de la holgura. En el emulador, el arranque falló una vez de forma intermitente por llegada tardía de rangos.
+- **Sin implementar desde el inicio del proyecto:** `local_world_model`, `telemetry` y el evaluador `hackathon_tests/run_scenario`. Por eso `T03_static_wall` (ver un muro no mapeado con ToF, mapearlo y rodearlo con `planner_mode: astar`) falla y `run_all_scenarios.sh` no produce PASS/FAIL. T03 queda fuera del alcance del diseño final: el CF1 real no lleva Multi-ranger y recibe los obstáculos del mapa del CF2, y el CF2 ya mapea y rodea obstáculos con su propio código (`scripts/cf2_*.py`).
+- **Ruta cooperativa:** el CF1 mantiene su orientación inicial y sigue la ruta con un zigzag de unos 10 cm por la grilla de 5 cm, dentro de la holgura. La ruta de ejemplo se planificó sobre el mapa sintético del CF2; T17 usa una sala de simulación (`worlds/cooperative_room.yaml`) que deja las paredes a ≥ 1 m de la ruta.
+- **Emulador en WSL:** se congela ~1,2 s cada ~30 s (pose y rangos). El stack pasa a HOVER y se recupera; en modo ruta el navegador mantiene comandos de hover mientras la ruta está vieja.
 
 > **Historial:** las ramas `tp*`, `integration-mvp-crazyswarm` (CF1) e `integration/cf2-navigation-mapping` (CF2) se conservan como respaldo. El resto de este README es la planificación previa al evento. Roadmap detallado: [docs/roadmap.md](docs/roadmap.md).
 
