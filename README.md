@@ -1,413 +1,331 @@
 # Mobile Robotics Hackathon — Crazyflie Autonomous Navigation
 
-Solución de nuestro equipo para el reto **Autonomous Navigation** de la Mobile Robotics Hackathon 2026, TU Dresden, 10–11 de octubre de 2026: dos Crazyflie que cooperan sobre ROS 2 Humble y Crazyswarm2.
+**Two Crazyflie drones that cooperate: one maps an unknown room, the other flies a route planned on that map.** Built for the *Autonomous Navigation* challenge of the Mobile Robotics Hackathon 2026 (TU Dresden, 10–11 October 2026) on ROS 2 Humble and Crazyswarm2.
 
-## Proyecto final: dos drones que cooperan
+Everything in this repository runs **without a drone and without a radio**: our own simulator with a Multi-ranger model, an emulator of the Crazyswarm2 API, fault injection and an automatic pass/fail test matrix. The same stack runs on hardware by swapping one package.
 
-| | CF1 — navegación | CF2 — mapeo |
+| | |
+|---|---|
+| **Problem** | A drone must reach a list of waypoints in a room it does not know, without hitting anything, and do something sensible when a sensor or the position fails. |
+| **Our answer** | Split the job in two. **CF2** carries the distance sensors and builds a 2D map. **CF1** carries the absolute positioning and flies a route planned on that map. |
+| **Status** | 16/16 scenarios of the test matrix pass, plus the cooperative scenario. Simulation only; no validated flight of this stack on hardware. |
+
+![Route planned by CF1 on the map produced by CF2: the red dashed line is the direct route between waypoints, the green line is the computed route that goes around the obstacle](data/examples/cooperative_polygon/preview.png)
+
+*The five crosses are the requested waypoints. The red dashed line joins them directly and crosses the obstacle. The green line is the route A\* computed on the CF2 map: same waypoints, same order, but it goes around the obstacle and keeps clear of the walls.*
+
+---
+
+## Table of contents
+
+- [The idea: two drones, one map](#the-idea-two-drones-one-map)
+- [Quick start](#quick-start)
+- [How the stack works](#how-the-stack-works)
+- [Safety: three independent layers](#safety-three-independent-layers)
+- [Verification](#verification)
+- [Known limitations](#known-limitations)
+- [Repository structure](#repository-structure)
+- [Documentation index](#documentation-index)
+- [Hardware and software](#hardware-and-software)
+
+---
+
+## The idea: two drones, one map
+
+The two Crazyflies carry different decks, so neither can do the whole job alone:
+
+| | **CF1 — navigation** | **CF2 — mapping** |
 |---|---|---|
-| Decks | Lighthouse + Flow | Flow + Multi-ranger (ToF) |
-| Localización | Lighthouse (frame `map` absoluto) | Flow (odometría relativa a su despegue) |
-| Función | Misión de waypoints con planificación, seguimiento de ruta y supervisor de seguridad | Explora un entorno desconocido y genera un mapa de ocupación 2D |
-| Código principal | `mission_manager`, `local_navigator`, `safety_supervisor`, `cf_adapter` (`flow_only`) | `scripts/cf2_*.py`, `global_planner`, `local_navigator` (evasión TP-34/35/36) |
-| Documentación | [interfaces](docs/interfaces.md), [runbook](docs/hackathon_day_runbook.md) | [cobertura y exportación](docs/cf2_coverage_demo.md), [simulación](docs/cf2_survey_simulation.md) |
+| **Decks** | Lighthouse + Flow | Flow + Multi-ranger (ToF) |
+| **Knows where it is** | Yes, absolutely (Lighthouse `map` frame) | Only relative to its own takeoff point (Flow) |
+| **Sees obstacles** | No | Yes, five distance rays |
+| **Role** | Flies the waypoint mission with planning, route following and a safety supervisor | Explores the room and builds a 2D occupancy map |
+| **Main code** | `mission_manager`, `local_navigator`, `safety_supervisor`, `cf_adapter` | `scripts/cf2_*.py`, `global_planner`, `local_navigator` |
 
-### Flujo cooperativo CF2 → CF1
+CF2 sees obstacles but does not know where it is in the room. CF1 knows exactly where it is but is blind. Putting the two together gives a drone that can plan a safe route:
 
 ```mermaid
 flowchart LR
-  A[CF2 explora<br/>cf2_survey_sim / vuelo real] --> B[Mapa 2D<br/>cf2_*_map.json + PGM/YAML]
-  B --> C[plan_shared_map.py<br/>alinea frames con poses A/B<br/>A* con holgura, desconocido = bloqueado]
-  C --> D[route.json<br/>tramos por waypoint]
-  D --> E[cooperative_route.py<br/>sirve /hk/path/processed]
-  E --> F[CF1: local_navigator<br/>use_planned_path]
-  F --> G[safety_supervisor] --> H[cf_adapter] --> I[CF1]
+  A["CF2 explores<br/>(real flight or cf2_survey_sim)"] --> B["2D map<br/>cf2_*_map.json + PGM/YAML"]
+  B --> C["plan_shared_map.py<br/>aligns the two frames with<br/>measured poses A and B"]
+  C --> D["route.json<br/>one leg per waypoint"]
+  D --> E["cooperative_route.py<br/>serves /hk/path/processed"]
+  E --> F["CF1 local_navigator<br/>use_planned_path"]
+  F --> G[safety_supervisor] --> H[cf_adapter] --> I((CF1))
 ```
 
-El CF2 mapea; el CF1 planifica su ruta sobre ese mapa (nunca trata el espacio desconocido como libre) y la sigue tramo a tramo, en orden, a la altura de la capa medida.
+Two rules keep this honest:
 
-### Cómo ejecutarlo en simulación (sin radio ni hardware)
+1. **Unknown space is never treated as free.** The planner blocks any cell CF2 did not observe, so CF1 never flies through a gap that simply was not measured.
+2. **The two frames must be aligned before trusting the map.** CF2 works in its own takeoff frame and CF1 in the Lighthouse frame. `plan_shared_map.py` needs two measured reference poses (A and B) to compute the transform, and it refuses to run without them unless you pass `--allow-simulation`.
 
-En Ubuntu 22.04 / WSL 2 con ROS 2 Humble y Crazyswarm2:
+## Quick start
+
+On Ubuntu 22.04 (or WSL 2) with ROS 2 Humble and Crazyswarm2 installed — the step-by-step installation guide is [SETUP_STATUS_WSL_ROS2.md](SETUP_STATUS_WSL_ROS2.md):
 
 ```bash
 bash scripts/build.sh && source ros2_ws/install/setup.bash
-
-# CF2: exploración y mapa 2D (con ventanas: bash scripts/cf2_sim_rviz.sh --scenario obstacles)
-python3 scripts/cf2_survey_sim.py --scenario obstacles --headless
-python3 scripts/cf2_export_map.py data/runs/cf2_sim_<sesión>_map.json
-
-# CF1: planificar sobre el mapa del CF2 (referencias A/B: docs/cf2_coverage_demo.md)
-python3 scripts/plan_shared_map.py --map data/runs/cf2_sim_<sesión>_map.json --mission <misión.yaml> \
-  --reference-a <A.json> --reference-b <B.json> --start <x> <y> <z> --robot-radius 0.10 \
-  --output route.json --allow-simulation
-
-# CF1: volar la ruta en el stack completo (API de Crazyswarm2 emulada)
-ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=T17_cooperative_route
-ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=<escenario> route:=route.json
-
-# Igual, con RViz: mapa del CF2, ruta planificada (azul), tramo actual (naranja) y trayectoria volada (roja)
-ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=T17_cooperative_route rviz:=true
-
-# Verificación de punta a punta (pose → salud → misión → navegación → safety → cf_adapter → aterrizaje)
-python3 scripts/verify_mvp_integration.py --scenario T17_cooperative_route
 ```
 
-### Verificación (simulación, 31/10/2026)
+**See one drone navigate around an obstacle** (own simulator, RViz window):
 
-| Prueba | Resultado |
-|---|---|
-| `colcon test` (14 paquetes) | 223 tests, 0 fallos (28 omitidos) |
-| Scripts `scripts/test_*.py` (CF2 y ruta cooperativa) | 77 tests, todos pasan |
-| `verify_mvp_integration.py`: T01, T02, T04 | PASS |
-| `verify_mvp_integration.py`: T17 ruta cooperativa | PASS en 10 de 10 corridas seguidas |
-| CF2 `cf2_survey_sim.py` vacío / con obstáculos | 28/28 objetivos, 83,8 % / 82,2 % observado |
-| Bucle completo: mapa del CF2 → `plan_shared_map` → vuelo del CF1 | PASS en ambos mapas (5 tramos, 0,3 m, holgura 0,15 m) |
+```bash
+ros2 launch hackathon_bringup simulation.launch.py scenario:=T05_popup_obstacle rviz:=true
+```
 
-### Limitaciones conocidas
+**Run the whole test matrix** and get a pass/fail table in `/tmp/hk_runs/results.csv`:
 
-- **Solo simulación.** El simulador del CF2 es ideal y el emulador del CF1 es cinemático; no modelan deriva del Flow, latencia de radio ni dinámica real. Alinear el mapa del CF2 con el frame Lighthouse requiere las poses medidas A/B del día del vuelo.
-- **Sin implementar desde el inicio del proyecto:** `local_world_model`, `telemetry` y el evaluador `hackathon_tests/run_scenario`. Por eso `T03_static_wall` (ver un muro no mapeado con ToF, mapearlo y rodearlo con `planner_mode: astar`) falla y `run_all_scenarios.sh` no produce PASS/FAIL. T03 queda fuera del alcance del diseño final: el CF1 real no lleva Multi-ranger y recibe los obstáculos del mapa del CF2, y el CF2 ya mapea y rodea obstáculos con su propio código (`scripts/cf2_*.py`).
-- **Ruta cooperativa:** el CF1 mantiene su orientación inicial y sigue la ruta con un zigzag de unos 10 cm por la grilla de 5 cm, dentro de la holgura. La ruta de ejemplo se planificó sobre el mapa sintético del CF2; T17 usa una sala de simulación (`worlds/cooperative_room.yaml`) que deja las paredes a ≥ 1 m de la ruta.
-- **Emulador en WSL:** se congela ~1,2 s cada ~30 s (pose y rangos). El stack pasa a HOVER y se recupera; en modo ruta el navegador mantiene comandos de hover mientras la ruta está vieja.
+```bash
+bash scripts/run_all_scenarios.sh
+```
 
-> **Historial:** las ramas `tp*`, `integration-mvp-crazyswarm` (CF1) e `integration/cf2-navigation-mapping` (CF2) se conservan como respaldo. El resto de este README es la planificación previa al evento. Roadmap detallado: [docs/roadmap.md](docs/roadmap.md).
+**See the two drones cooperate**, end to end, with no radio:
 
-## Objetivo del reto
+```bash
+# 1. CF2 explores and writes a 2D map
+python3 scripts/cf2_survey_sim.py --scenario obstacles --headless
+python3 scripts/cf2_export_map.py data/runs/cf2_sim_<session>_map.json
 
-La descripción del reto pide guiar un dron, AGV o rover por *waypoints* usando percepción; localizarse, planificar y ejecutar trayectorias sin colisiones en escenas con cambios de iluminación, pocos rasgos visuales y elementos dinámicos. El objetivo inicial del equipo es demostrar una solución pequeña, segura y repetible con Crazyflie.
+# 2. CF1 plans a route on that map
+python3 scripts/plan_shared_map.py --map data/runs/cf2_sim_<session>_map.json \
+  --mission <mission.yaml> --reference-a <A.json> --reference-b <B.json> \
+  --start <x> <y> <z> --robot-radius 0.10 --output route.json --allow-simulation
 
-La organización anuncia 20 Crazyflie 2.1 Brushless y decks Lighthouse, Optical Flow y Multi Ranger, además de NUCs, un NVIDIA Jetson AGX Orin y red 5G en el recinto. La página no especifica qué sensores estarán montados en cada dron, si habrá cámaras, ni qué interfaz de sensores/ROS estará preparada. **Confirmar esos detalles con los mentores antes de elegir la arquitectura final.**
+# 3. CF1 flies it through the full stack (emulated Crazyswarm2 API), with RViz
+ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=C01_cooperative_route rviz:=true
+```
 
-Fuentes: [reto Autonomous Navigation](https://mobile-robotics.eu/#challenges) · [plataformas y equipamiento](https://mobile-robotics.eu/#tech-equipment) · [FAQ (qué llevar)](https://mobile-robotics.eu/#faq)
+The RViz window shows the CF2 map, the planned route in blue, the current leg in orange and the flown trajectory in red.
 
-## Esquema general del sistema
+**Check that it actually worked** — this runs the full chain (pose → health → mission → navigation → safety → adapter → landing) and prints PASS or FAIL:
 
-ROS 2 conecta procesos llamados nodos mediante topics, services y actions. Crazyswarm2 proporciona el servidor y la interfaz ROS para hablar con los Crazyflies. El nodo de navegación del equipo decidirá qué hacer; el firmware del Crazyflie mantiene el control de vuelo de bajo nivel. RViz es una herramienta de visualización, no el controlador ni necesariamente un simulador físico.
+```bash
+python3 scripts/verify_mvp_integration.py --scenario C01_cooperative_route
+```
+
+## How the stack works
+
+Every box is one ROS 2 node. Data flows left to right; the only node allowed to command the drone is the safety supervisor.
 
 ```mermaid
-flowchart LR
-  subgraph CF[Crazyflie físico]
-    D[Decks / sensores<br/>Lighthouse, Flow, Multi-Ranger]
-    E[Estimación de estado<br/>y firmware de vuelo]
-    M[Motores]
-    D --> E --> M
-  end
-
-  subgraph HOST[Ordenador ROS 2]
-    S[Servidor Crazyswarm2<br/>backend cflib/cpp]
-    N[Nodo del equipo<br/>misión + navegación]
-    R[RViz2<br/>visualización]
-    N -- comandos ROS 2 --> S
-    S -- telemetría ROS 2 --> N
-    S -- datos /tf y otros topics --> R
-  end
-
-  S <-->|Crazyradio / enlace compatible<br/>confirmar en el evento| E
-
-  subgraph SIM[Alternativa durante desarrollo]
-    FS[Servidor Crazyswarm2<br/>backend sim]
-    SIL[Firmware en software-in-the-loop]
-    FS --> SIL
-  end
-  N -. misma interfaz ROS, según soporte .-> FS
-  FS -. visualización .-> R
+flowchart TB
+  WP["Waypoints YAML"] --> MM["mission_manager<br/>which waypoint now?"]
+  MM -- "/hk/goal" --> GP["global_planner<br/>A* + replanning"]
+  GP -- "/hk/path" --> PP["path_processor<br/>simplify + lookahead"]
+  PP -- "/hk/path/processed" --> LN["local_navigator<br/>follow + dodge"]
+  LN -- "/hk/cmd/nav" --> SS["safety_supervisor<br/>may override anything"]
+  SS -- "/hk/cmd/safe" --> AD["cf_adapter<br/>or simulation_adapter"]
+  AD -- "pose" --> SM["state_monitor<br/>can I trust my position?"]
+  AD -- "ranges" --> RP["range_processor<br/>filter + closing rate"]
+  RP --> WM["local_world_model<br/>rolling occupancy grid"]
+  WM -- "/hk/map" --> GP
+  SM --> SS
+  SM --> MM
+  RP --> SS
+  RP --> LN
+  AD <--> CF(("Crazyflie<br/>onboard EKF<br/>and controller"))
 ```
 
-El diagrama representa la arquitectura objetivo, no confirma que todos los sensores publiquen ya los topics necesarios en nuestro entorno. En hardware real, el servidor se conecta a Crazyflies mediante uno o varios Crazyradio; en `sim`, el backend simulado sustituye ese enlace. Crazyswarm2 ofrece servicios de alto nivel como despegue, aterrizaje y `go_to`, además de comandos de estado completo según el backend.
+**The laptop never controls the motors.** It sends high-level setpoints (go to this point, or move at this velocity); the Crazyflie firmware handles attitude and motors onboard. That division is what makes the same code run in simulation and on hardware.
 
-### Recorrido de una orden
+What each part does, in one line:
 
-1. Un nodo de misión determina el siguiente *waypoint*.
-2. El planificador consulta la posición y las mediciones de obstáculos disponibles.
-3. El controlador de navegación decide avanzar, rodear un obstáculo, esperar o aterrizar.
-4. El nodo envía una orden por la interfaz ROS de Crazyswarm2.
-5. El servidor la entrega al backend: simulador o conexión de radio al Crazyflie.
-6. El firmware ejecuta el control de vuelo; sensores/estado pueden regresar al host como telemetría ROS.
-7. RViz escucha topics de visualización (por ejemplo, transformaciones `/tf` y, cuando estén configurados, pose o sensores) y los dibuja.
-
-**RViz no está en el lazo de control.** Su ventana puede ayudar a depurar y presentar, pero el resultado del dron depende de los nodos de control, de la estimación y del hardware.
-
-## Crazyflie y sensores anunciados
-
-| Componente | Para qué sirve | Dependencias / límites que debemos confirmar |
-|---|---|---|
-| Crazyflie 2.1 Brushless | Plataforma voladora y firmware que estabiliza el vuelo y acciona motores. | Confirmar acceso, firmware y procedimiento de seguridad con mentores. |
-| Lighthouse deck | Posición en el espacio a partir de estaciones base Lighthouse; la estimación se realiza en el Crazyflie. | Requiere deck, estaciones base configuradas y línea de vista. Confirmar si las estaciones y geometría estarán listas. |
-| Flow deck / Optical Flow | Estima movimiento relativo al suelo; combinado con medida de altura ayuda a la estimación de movimiento/altura. | Depende de las condiciones de superficie y altura; no es una cámara para reconocer obstáculos. |
-| Multi-Ranger | Mide distancia en cinco direcciones: delante, detrás, izquierda, derecha y arriba. | Es percepción de rango dispersa, no un escáner denso 360°; comprobar topic/tasa y límites reales. |
-| Cámara | No aparece especificada en la lista de Crazyflies de la página del evento. | No planear visión por cámara hasta confirmar que estará disponible y accesible. |
-| Crazyradio / radio | Enlace típico del ordenador de control al Crazyflie. | Confirmar qué radio, ordenador y backend usarán. WSL 2 no garantiza acceso directo al USB del radio. |
-
-Referencias: [Lighthouse](https://www.bitcraze.io/documentation/system/positioning/) · [Flow Deck](https://www.bitcraze.io/products/flow-deck-v2/) · [Multi-Ranger](https://www.bitcraze.io/multi-ranger-deck/) · [arquitectura de Crazyswarm2](https://imrclab.github.io/crazyswarm2/overview.html)
-
-## Software y función
-
-| Software | Función en el proyecto |
+| Node | Job |
 |---|---|
-| Ubuntu 22.04 (WSL 2) | Entorno Linux actual de desarrollo en la laptop. |
-| ROS 2 Humble | Middleware y herramientas: nodos, topics, services, configuración y lanzamiento. |
-| Crazyswarm2 | Servidor y API ROS 2 que abstraen control de Crazyflies y permiten usar diferentes backends. |
-| Crazyflie firmware / `cffirmware` | Firmware y bindings empleados por la simulación SIL; no es el algoritmo de navegación del equipo. |
-| `rowan` | Dependencia Python que necesitaba el servidor simulado en esta instalación. |
-| RViz2 | Inspección de transforms, modelos y datos ROS configurados. No calcula rutas ni controla motores. |
-| Git + GitHub | Control de versiones, colaboración y documentación del prototipo. |
-| `acados` | **No es requisito del MVP.** Considerarlo solo si, después de validar sensores, hay una razón concreta para optimización/MPC y tiempo para integrarlo. |
+| `mission_manager` | Reads the waypoint list and decides which one is the current goal. Handles takeoff, landing, pause and abort. |
+| `local_world_model` | Builds a rolling 2D grid from the four horizontal distance rays: free along each ray, occupied at the endpoint, unknown elsewhere. Obstacles expire after a few seconds, so a box that is removed disappears from the map. |
+| `global_planner` | Runs A\* on that grid, adds a cost for flying near obstacles, replans when the path becomes blocked, and reports `NO_PATH` instead of advancing blindly. |
+| `path_processor` | Removes useless points from the route and produces the lookahead point the follower aims at. |
+| `local_navigator` | Follows the lookahead with speed and acceleration limits, and pushes sideways when a ranger sees something close. |
+| `state_monitor` | Answers one question: can I trust the position I am receiving? Outputs `GOOD`, `DEGRADED` or `LOST`. |
+| `range_processor` | Validates each distance reading, filters spikes and computes how fast each obstacle is approaching. |
+| `safety_supervisor` | The last word. Hovers, slows, lands or aborts, whatever the rest of the stack asked for. |
+| `cf_adapter` | The only package that talks to Crazyswarm2. Swapping it for `simulation_adapter` is the whole difference between hardware and simulation. |
+| `telemetry` / `hackathon_tests` | Measure the run and decide pass or fail against the scenario's expected result. |
 
-## Estado de preparación
+### Two design decisions worth knowing
 
-### Validado
+**The drone does not turn to face where it is going** (`face_target: false`). Turning the body sweeps the five distance rays across the room, and the supervisor reads that sweep as obstacles rushing towards the drone, which makes it stop for no reason. Holding the heading removes the false alarm. Set `face_target: true` if your platform needs to point where it flies.
 
-- [x] WSL 2 con Ubuntu 22.04 y usuario Linux configurado.
-- [x] ROS 2 Humble instalado y configurado; previamente se verificó la comunicación básica de ROS 2.
-- [x] Paquetes ROS de Crazyflie/Crazyswarm2 instalados.
-- [x] Dependencias que bloqueaban la simulación resueltas: bindings `cffirmware` y módulo `rowan`.
-- [x] Ejecución de `hello_world` con el backend `sim`: el log registró despegue y aterrizaje.
-- [x] RViz2 abrió añadiendo `rviz:=True` al lanzamiento.
-- [x] Vimos nodos como `/crazyflie_server`, `/teleop`, `/joy_node` y `/rviz2` durante la prueba.
-- [x] Comprobamos que `/tf` tenía un publicador y suscriptor, y que `/cf231/cmd_full_state` no tenía publicadores una vez finalizado el ejemplo.
-- [x] Repositorio local inicializado en la rama `main`; `origin` configurado por SSH según comprobación del usuario.
+**A ranger that gets no echo back does not prove the space is clear.** A dark or glass surface returns nothing, exactly like empty air. Those rays leave the cells unknown instead of marking them free, so the map never erases a wall it had already seen.
 
-### Pendiente — prioridad alta
+## Safety: three independent layers
 
-Preguntas para mentores (no bloquean el desarrollo gracias a la capa de abstracción, TP-09/TP-10):
-
-- [ ] Preguntar qué Crazyflie/deck se asignará y qué sensores estarán realmente montados.
-- [ ] Confirmar fuente de localización (Lighthouse/Flow u otra), datos ROS disponibles, nombres/tipos de topics y tasa de actualización.
-- [ ] Confirmar si el equipo debe usar su laptop, un NUC o Jetson; backend previsto (`cflib`, `cpp` o `sim`) y acceso al radio.
-
-Desarrollo (el detalle está en [docs/roadmap.md](docs/roadmap.md)):
-
-- [x] API propia y `cf_adapter`, verificados con mocks ROS y SIL (TP-09); validación con hardware real pendiente.
-- [x] Simulador propio con pose y seis rangos sintéticos (TP-10); 79 pruebas pasan, repetir con `bash scripts/verify_tp10.sh`.
-- [ ] Nodo propio de misión/navegación y configuración de *waypoints* (TP-26, TP-32).
-- [ ] Primera política de evitación apropiada a los sensores reales (TP-19, TP-20, TP-34) y comportamiento seguro ante datos perdidos (TP-15, TP-37, TP-38, TP-39).
-- [ ] Probar integración con un Crazyflie real bajo supervisión y espacio de vuelo autorizado (runbook del roadmap).
-- [ ] Medir resultados y preparar demo/presentación.
-
-### Limitación actual de la simulación
-
-La prueba actual sirve como **smoke test** de lanzamiento, servicios de alto nivel y visualización. En la inspección que hicimos no aparecieron topics de pose/rango como `/cf231/pose` o `/scan`, y `/cf231/cmd_full_state` tenía cero publicadores al terminar `hello_world`. Por lo tanto, todavía no se ha validado percepción, localización autónoma, planificación ni evitación de obstáculos. Comprobar los endpoints durante un vuelo activo y con el backend/sensores que se vayan a usar.
-
-Para no depender de esto, el roadmap añade un `simulation_adapter` propio (TP-10) que publica pose y rangos sintéticos del Multi-ranger con la misma API que usará el adapter de hardware.
-
-## MVP propuesto
-
-La primera solución debería privilegiar que funcione repetidamente antes que complejidad algorítmica:
-
-1. **Despegue/aterrizaje seguro:** secuencia oficial de Crazyswarm2, zona y altura acordadas, parada de emergencia conocida.
-2. **Navegación a waypoint:** mover a coordenadas si hay localización válida; validar llegada con tolerancia y tiempo límite.
-3. **Percepción mínima de obstáculos:** usar la fuente confirmada (por ejemplo, distancias Multi-Ranger); filtrar lecturas inválidas/obsoletas.
-4. **Evitación sencilla:** detenerse y elegir una dirección libre o rodear un obstáculo usando las medidas disponibles. No asumir mapa 3D completo con cinco rayos.
-5. **Recuperación segura:** si no hay posición, el sensor no actualiza o el plan se bloquea, frenar/estabilizar y aterrizar según protocolo acordado.
-6. **Repetibilidad:** correr la misión varias veces, guardar logs y reportar claramente fallos y limitaciones.
-
-Una máquina de estados inicial puede ser:
+Three state machines run at the same time and do not replace each other. The safety one has priority over the other two.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Verificar
-  Verificar --> Despegar: sensores y comunicación válidos
-  Verificar --> Seguro: falla pre-vuelo
-  Despegar --> Navegar: altura alcanzada
-  Navegar --> Evitar: obstáculo dentro del margen
-  Evitar --> Navegar: ruta local libre
-  Navegar --> SiguienteWaypoint: waypoint alcanzado
-  SiguienteWaypoint --> Navegar: quedan waypoints
-  SiguienteWaypoint --> Aterrizar: misión completada
-  Navegar --> Seguro: datos caducados / bloqueo / emergencia
-  Evitar --> Seguro: no existe maniobra segura
-  Seguro --> Aterrizar
-  Aterrizar --> [*]
+  direction LR
+  [*] --> NORMAL
+  NORMAL --> SLOW: position degraded
+  SLOW --> NORMAL: recovered
+  NORMAL --> HOVER: obstacle close, stale data, outside geofence or no path
+  SLOW --> HOVER: same causes
+  HOVER --> NORMAL: cause gone for N seconds
+  HOVER --> LAND: position still lost after hover_timeout
+  LAND --> [*]
+  NORMAL --> ABORT: emergency
+  HOVER --> ABORT: emergency
+  ABORT --> [*]
 ```
 
-Los umbrales de distancia, altura y velocidad deben definirse con los mentores, el espacio disponible y el deck instalado; no se fijan aquí valores arbitrarios (todos van en YAML; lista en el roadmap, "Parámetros configurables").
+| Layer | States | Package |
+|---|---|---|
+| **Mission** | Check → Take off → Navigate ⇄ Avoid → Next waypoint → Land | `mission_manager` |
+| **Localization health** | `GOOD`, `DEGRADED`, `LOST` | `state_monitor` |
+| **Safety** | `NORMAL`, `SLOW`, `HOVER`, `LAND`, `ABORT` | `safety_supervisor` |
 
-Esta máquina de estados es la capa de **misión**. El roadmap añade dos capas independientes por debajo: la **salud de la localización** (`GOOD`/`DEGRADED`/`LOST`) y el **Safety Supervisor** (`NORMAL`/`SLOW`/`HOVER`/`LAND`/`ABORT`), que puede anular la navegación normal en cualquier estado.
+The supervisor does not compare the raw distance against a threshold. It subtracts the **stopping distance** first: a drone approaching a wall at 1 m/s needs time to react and then to brake, so the margin it needs depends on how fast it is closing in. Flying parallel to a wall does not count as approaching it.
 
-## Roadmap
+## Verification
 
-El roadmap completo de 0–100% está en [docs/roadmap.md](docs/roadmap.md): arquitectura por módulos y paquetes ROS 2, los 42 TPs con su DoD, la test matrix T01–T18 y el runbook del día del evento. Como no da tiempo a hacer los 42 TPs antes del 10 de octubre, cada TP tiene una prioridad: **P0** = MVP imprescindible, **P1** = si sobra tiempo, **P2** = solo si todo está estable.
+Everything below is **simulation**. It shows the software behaves correctly against a modelled world; it is not evidence of a real flight.
 
-| Bloque | Rango | Contenido | Estado |
+Last full run on 1 November 2026, ROS 2 Humble on WSL 2, from a clean checkout:
+
+| Check | Command | Result |
+|---|---|---|
+| Build | `scripts/build.sh` | 14 packages, no errors |
+| Unit tests | `colcon test` | 231 tests, 0 failures, 1 skipped |
+| Script tests | `pytest scripts/test_*.py` | 77 tests, 0 failures |
+| Test matrix T01–T16 | `scripts/run_all_scenarios.sh` | **16 / 16 PASS**, 0 collisions |
+| End-to-end, single drone | `verify_mvp_integration.py` T01, T02, T04 | PASS |
+| End-to-end, cooperative route | `verify_mvp_integration.py` C01, 3 consecutive runs | PASS 3 / 3 |
+| CF2 exploration | `cf2_survey_sim.py`, empty and with obstacles | 28 / 28 targets, 83.8 % and 82.2 % of the area observed |
+| Full loop: CF2 map → plan → CF1 flight | both maps | PASS on both, 5 legs each |
+
+The simulator adds sensor and pose noise, so the measured margins move a little between runs. In the run above `T03_static_wall` cleared the wall by 0.32 m, against the 0.20 m its scenario demands; across runs it has stayed between 0.23 m and 0.32 m.
+
+### The test matrix
+
+Sixteen scenarios, each one a world plus a mission plus an injected fault plus an expected result. The runner compares the measured metrics against that expectation and writes a row to `results.csv`.
+
+| | Scenario | What it injects | What must happen |
 |---|---|---|---|
-| A | 0–12% | Entorno, WSL, GitHub, ROS 2, workspace | ✅ |
-| B | 12–25% | Crazyswarm2, interfaz de hardware, simulador propio, bringup | 🟡 |
-| C | 25–39% | Frames, estado, salud de localización, altura | ⬜ |
-| D | 39–55% | Modelo y filtrado del Multi-ranger, mapa local | ⬜ |
-| E | 55–70% | Mission Manager, A*, replanning | ⬜ |
-| F | 70–82% | Path follower, evitación reactiva | ⬜ |
-| G | 82–94% | Safety Supervisor, watchdogs, geofence, rosbag, fault injection | ⬜ |
-| H | 94–100% | Ubuntu nativo, `event.yaml`, runbook | ⬜ |
+| T01 | single waypoint | — | reaches the goal |
+| T02 | multiple waypoints | — | visits them in order |
+| T03 | static wall | — | maps it and goes around it |
+| T04 | corridor | — | keeps a margin on both sides |
+| T05 | obstacle appears | box pops up mid-route | slows or hovers, no collision |
+| T06 | obstacle disappears | box removed | the map forgets it and the route reopens |
+| T07 | obstacle approaches | box moves towards the drone | brakes on time-to-collision |
+| T08 | range spike | one bad reading | the filter ignores it |
+| T09 | range dropout | rangers go silent | degrades safely |
+| T10 | delayed pose | position arrives 0.5 s late | detects it and stops normal navigation |
+| T11 | frozen pose | position stops updating | health goes `LOST` |
+| T12 | position lost | position stream dies | hovers, then lands |
+| T13 | unreachable goal | goal walled in | reports `NO_PATH`, does not advance |
+| T14 | geofence | mission outside the allowed box | the setpoint is clamped |
+| T15 | ceiling | low ceiling | stays inside the height envelope |
+| T16 | commands stop | the command stream pauses | watchdog hovers |
+| C01 | cooperative route | — | CF1 flies the route CF2's map produced |
 
-Al terminar un TP, actualizar su casilla en `docs/roadmap.md` y, si cambia el estado de un bloque, también esta tabla.
+Details and the manual procedures for T17 (restart a node) and T18 (replay a rosbag) are in [docs/simulations.md](docs/simulations.md).
 
-## Estructura del repositorio
+## Known limitations
+
+Read this before judging the results.
+
+- **Simulation only.** The CF2 simulator is ideal and the CF1 emulator is kinematic. Neither models Flow drift, radio latency or real aerodynamics. No flight of this stack on hardware has been validated.
+- **The frame alignment needs real measurements.** Linking the CF2 map to the Lighthouse frame requires poses A and B measured on the day of the flight. The example route uses a synthetic map and `--allow-simulation`.
+- **The cooperative route zig-zags by about 10 cm.** The grid is 5 cm, so the route follows a staircase. It stays inside the clearance, but it is not a smooth path.
+- **The WSL emulator freezes for ~1.2 s roughly every 30 s.** The stack goes to `HOVER` and recovers by itself. On a native machine this does not happen.
+- **Narrow corridors stop the drone.** The supervisor hovers when any horizontal ranger reads under 0.3 m, so a corridor under about 1 m wide is not flyable with the default configuration. T04 uses a 1.0 m corridor for this reason.
+- **Not implemented:** per-node latency metrics, the single-command `event.launch.py`, validation on native Ubuntu, and T17/T18 as automated tests.
+
+> **Branch history:** `tp*`, `integration-mvp-crazyswarm` (CF1) and `integration/cf2-navigation-mapping` (CF2) are kept as a backup.
+
+## Repository structure
 
 ```text
 .
 ├── README.md
-├── docs/
-│   ├── roadmap.md          # TP-01..TP-42, prioridades, test matrix, runbook
-│   ├── interfaces.md       # contrato de topics, mensajes, servicios y TF entre paquetes
-│   └── simulations.md      # niveles de simulación, escenarios y cómo evaluarlos
+├── SETUP_STATUS_WSL_ROS2.md    # install WSL 2 + ROS 2 + Crazyswarm2 from scratch
+├── docs/                       # see the documentation index below
 ├── ros2_ws/src/
-│   ├── hackathon_interfaces/   # msg/srv propios (MultiRange, Setpoint, SafetyState, ...)
+│   ├── hackathon_interfaces/   # our own messages and services
 │   ├── hackathon_bringup/
-│   │   ├── launch/             # simulation.launch.py, real.launch.py
-│   │   └── config/             # simulation/event/conservative/cs2_sim.yaml, frames.yaml,
-│   │                           # worlds/, missions/, scenarios/ (T01–T16)
-│   ├── simulation_adapter/     # simulador propio: mundo, raycast, dinámica, fallos
-│   ├── cf_adapter/             # único paquete que habla con Crazyswarm2
-│   ├── state_monitor/          # estado único + salud de la localización
-│   ├── range_processor/        # validación/filtro del Multi-ranger, d_dot
+│   │   ├── launch/             # simulation.launch.py, simulation_cf.launch.py, real.launch.py
+│   │   ├── rviz/               # hackathon.rviz, cf1_route.rviz, cf2_live.rviz
+│   │   └── config/             # parameters, worlds, missions, scenarios T01-T16 + C01
+│   ├── simulation_adapter/     # our simulator: world, raycasts, dynamics, faults, CS2 emulator
+│   ├── cf_adapter/             # the only package that talks to Crazyswarm2
+│   ├── state_monitor/          # single state topic + localization health
+│   ├── range_processor/        # Multi-ranger validation, filtering, rays in the map frame
 │   ├── local_world_model/      # rolling occupancy grid
-│   ├── mission_manager/        # waypoints + máquina de estados de misión
-│   ├── global_planner/         # ruta directa (P0) o A* (P1) + replan
-│   ├── path_processor/         # simplificación de ruta
-│   ├── local_navigator/        # path follower + evitación reactiva
+│   ├── mission_manager/        # waypoints + mission state machine
+│   ├── global_planner/         # A* + replanning
+│   ├── path_processor/         # route simplification + lookahead
+│   ├── local_navigator/        # path follower + reactive avoidance + route mode
 │   ├── safety_supervisor/      # NORMAL/SLOW/HOVER/LAND/ABORT, watchdogs, geofence
-│   ├── telemetry/              # métricas por ejecución
-│   └── hackathon_tests/        # evaluador pass/fail de escenarios
-├── scripts/                # build.sh, record_bag.sh, run_all_scenarios.sh
-└── data/                   # bags y resultados locales (fuera de Git)
+│   ├── telemetry/              # per-run metrics
+│   └── hackathon_tests/        # pass/fail scenario evaluator
+├── scripts/                    # build, test matrix, verifiers, CF2 tools, cooperative planning
+└── data/                       # example maps and routes; bags stay out of Git
 ```
 
-Cada paquete Python sigue el mismo patrón: un `*_node.py` que conecta ROS y uno o más **módulos de lógica pura** (sin `rclpy`) con tests en `test/`. `cf_adapter` ya implementa TP-09 y tiene pruebas de conversiones, comunicación ROS y conexión al SIL. `simulation_adapter` implementa TP-10 con movimiento, servicios de vuelo, mundo YAML y rangos por raycast. `mission_manager` incorpora TP-26 de main con 8 pruebas de lógica. Los demás paquetes siguen mayormente como esqueletos con lógica pendiente y tests marcados como `skip`.
+Every Python package follows the same pattern: a `*_node.py` that only wires ROS, plus one or more **pure-logic modules** with no `rclpy` import, each with its own tests in `test/`. That is what lets most of the system be tested without starting ROS at all.
 
-### Mapa del código a escribir
+| Package | Pure-logic modules |
+|---|---|
+| `simulation_adapter` | `world.py`, `dynamics.py`, `sensors.py`, `faults.py`, `emulator/` |
+| `cf_adapter` | `mapping.py` |
+| `state_monitor` | `health.py` |
+| `range_processor` | `range_filter.py`, `rays.py` |
+| `local_world_model` | `grid.py` |
+| `mission_manager` | `mission.py` |
+| `global_planner` | `astar.py`, `replan.py` |
+| `path_processor` | `simplify.py` |
+| `local_navigator` | `follower.py`, `avoidance.py`, `route_follower.py`, `speed_policy.py` |
+| `safety_supervisor` | `supervisor.py`, `watchdog.py`, `geofence.py` |
+| `telemetry` | `metrics.py` |
+| `hackathon_tests` | `scenario.py` |
 
-| Paquete | Módulos de lógica | TPs | Rol | Prioridad |
-|---|---|---|---|---|
-| `simulation_adapter` | `world.py`, `dynamics.py`, `faults.py` | TP-10, TP-41 | Integración | P0 (lo primero) |
-| `state_monitor` | `health.py` | TP-13–TP-17 | Percepción | P0 |
-| `range_processor` | `range_filter.py`, `rays.py` | TP-19–TP-21, TP-36 | Percepción | P0 |
-| `mission_manager` | `mission.py` | TP-26 | Navegación | P0 |
-| `global_planner` | `astar.py` (`direct_path` es P0), `replan.py` | TP-27–TP-29 | Navegación | P0 / P1 |
-| `local_navigator` | `follower.py`, `avoidance.py` | TP-32–TP-36 | Navegación | P0 |
-| `safety_supervisor` | `supervisor.py`, `watchdog.py`, `geofence.py` | TP-37–TP-39 | Navegación | P0 |
-| `telemetry` | `metrics.py` | TP-40 | Integración | P0 (para evaluar) |
-| `hackathon_tests` | `scenario.py` | TP-31, TP-41 | Integración | P0 |
-| `cf_adapter` | `mapping.py` | TP-08, TP-09 | Integración | P0 (tras TP-08) |
-| `local_world_model` | `grid.py` | TP-22–TP-25 | Percepción | P1 |
-| `path_processor` | `simplify.py` | TP-30 | Navegación | P1 |
+## Documentation index
 
-Para empezar a trabajar:
+| Document | What you will find |
+|---|---|
+| [docs/interfaces.md](docs/interfaces.md) | The contract between packages: every topic, message, service and frame. Read this first if you want to add a node. |
+| [docs/simulations.md](docs/simulations.md) | The four simulation levels, how a scenario is written and how pass/fail is decided. |
+| [docs/roadmap.md](docs/roadmap.md) | The full plan: 42 work packages with their definition of done, the test matrix and the event-day runbook. |
+| [docs/frames.md](docs/frames.md) | Coordinate frames, axes and signs (REP-103). |
+| [docs/sensor_model.md](docs/sensor_model.md) | How the Multi-ranger is modelled, including the REP-117 convention for invalid readings. |
+| [docs/crazyflie_command_interface.md](docs/crazyflie_command_interface.md) | What Crazyswarm2 accepts, command priorities and firmware watchdogs. |
+| [docs/environment_matrix.md](docs/environment_matrix.md) | Exact versions of every tool, and which ones were verified. |
+| [docs/hackathon_day_runbook.md](docs/hackathon_day_runbook.md) | Step-by-step procedure for the day the real hardware arrives. |
+| [docs/cf2_*.md](docs/) | Drone 2: hardware sessions, live mapping, coverage, survey simulation. |
 
-```bash
-# En WSL, con el repo clonado dentro de ~/ (TP-03)
-bash scripts/build.sh
-source ros2_ws/install/setup.bash
-ros2 launch hackathon_bringup simulation.launch.py scenario:=T01_single_waypoint
-```
+Extra checks: `scripts/verify_tp10.sh` (simulator), `scripts/verify_tp12.py` (bringup), `scripts/verify_event_config.py --ready` (refuses to accept configuration placeholders before a real flight).
 
-TP-12 verificado: arranca los 16 nodos y conecta pose, estado, rangos y TF; Ctrl+C
-cierra el bringup. Para repetir: `ROS_DOMAIN_ID=92 /usr/bin/python3 scripts/verify_tp12.py`
-(después de cargar ROS e `install/setup.bash`). TP-26 de misión está implementado; navegación y seguridad siguen en desarrollo.
-El arranque no implica una misión autónoma.
+## Hardware and software
 
-Configuración y preparación del evento: [runbook](docs/hackathon_day_runbook.md).
-Validar la plantilla con `/usr/bin/python3 scripts/verify_event_config.py`; completar
-identidad/radio y confirmar valores físicos antes de usar `--ready`.
-
-## Plan del equipo
-
-### Antes del evento (4–9 de octubre)
-
-Solo TPs **P0**. Cada día termina con una *vertical slice* ejecutable.
-
-| Día | TPs | Resultado esperado |
+| Component | What it gives us | What it is not |
 |---|---|---|
-| 4 oct | TP-01, TP-03, TP-04 | README, roadmap, matriz de entorno, repo clonado dentro de WSL, flujo de PR probado. |
-| 5 oct | TP-06, TP-08, TP-09 | Workspace `ros2_ws`, `hackathon_interfaces`, documento de comandos Crazyflie, API propia de hardware; sin acoplarse a un sensor no confirmado. |
-| 6 oct | TP-10, TP-12, TP-13, TP-14 | Simulador propio (pose + rangos sintéticos), `simulation.launch.py`, frames, topic de estado único. **VS-1.** |
-| 7 oct | TP-15, TP-17, TP-19, TP-20, TP-26, TP-32 | Salud de localización, banda de altura, filtrado de rangos, misión por waypoints sin obstáculos. **VS-2.** |
-| 8 oct | TP-34, TP-37, TP-38, TP-39 | Evitación reactiva, Safety Supervisor, watchdogs, geofence; pruebas de llegada, lecturas inválidas, obstáculo y timeout (T01, T02, T05, T08–T16). |
-| 9 oct | TP-42 C/E | `config/event.yaml`, runbook, congelar dependencias, README de instalación, preguntas para mentores, ensayo, video de respaldo y estructura de demo/pitch. Sin cambios grandes de última hora. |
+| Crazyflie 2.1 Brushless | The flying platform; the firmware stabilizes flight and drives the motors. | It does not plan routes. |
+| Lighthouse deck | Absolute position from base stations, computed onboard. | Not an obstacle sensor; needs line of sight. |
+| Flow deck | Motion relative to the floor plus height. | Not a camera; drifts over time. |
+| Multi-ranger | Distance in five directions: front, back, left, right, up. | Five rays, not a 360° scanner. It sees nothing between them. |
+| Crazyradio | The link from the laptop to the drone. | From WSL 2 it needs usbipd, see [docs/cf2_flow_multiranger.md](docs/cf2_flow_multiranger.md). |
 
-El mapa de ocupación + A* (TP-22 a TP-31) es **P1**: solo si la slice P0 está estable. El MVP no lo necesita.
+Software: Ubuntu 22.04 (WSL 2 or native), ROS 2 Humble, Crazyswarm2 with its `sim`, `cflib` and `cpp` backends, and RViz2 for visualization. MPC, neural networks and camera perception were deliberately left out; the reasons are in [docs/roadmap.md](docs/roadmap.md#design-decisions).
 
-### Durante la hackaton (10–11 de octubre)
+### Progress against the roadmap
 
-1. **Kickoff:** confirmar criterios, pista, sensores, computador de control, radio, seguridad y API de ROS.
-2. **Baseline:** ejecutar un ejemplo proporcionado en el hardware real; no empezar volando código nuevo.
-3. **Integración incremental:** seguir el [runbook de 14 pasos](docs/roadmap.md#runbook-del-día-del-evento) (radio → Lighthouse → Flow → Multi-ranger → frames → hover → waypoints → obstáculos → tuning → congelar configuración). Si el stack está bien desacoplado, el cambio de simulador a hardware se limita a `cf_adapter`, configuración y tuning (VS-5).
-4. **Ensayos:** medir cada intento, registrar logs y volver a la última versión estable después de cualquier cambio riesgoso.
-5. **Presentación:** enseñar el problema, sensores, arquitectura, demo, métricas y límites conocidos.
+| Block | Content | Status |
+|---|---|---|
+| A | Environment, WSL, GitHub, ROS 2, workspace | ✅ |
+| B | Crazyswarm2, hardware interface, own simulator, bringup | ✅ |
+| C | Frames, state, localization health, altitude | ✅ |
+| D | Multi-ranger model and filtering, local map | ✅ |
+| E | Mission manager, A\*, replanning | ✅ |
+| F | Path follower, reactive avoidance | ✅ |
+| G | Safety supervisor, watchdogs, geofence, logging, fault injection | ✅ |
+| H | Native Ubuntu, event configuration, runbook | 🟡 partial |
 
-El programa publicado sitúa la selección/explicación de retos el sábado por la mañana y las presentaciones finales el domingo a las 17:00. Revisar el sitio por si cambia. [Agenda oficial](https://mobile-robotics.eu/#agenda)
+## References
 
-### Roles sugeridos para 3 personas
+- [Mobile Robotics Hackathon 2026](https://mobile-robotics.eu/) — [challenge](https://mobile-robotics.eu/#challenges) · [equipment](https://mobile-robotics.eu/#tech-equipment)
+- [Crazyswarm2](https://imrclab.github.io/crazyswarm2/overview.html) — [usage](https://imrclab.github.io/crazyswarm2/usage.html)
+- Bitcraze: [positioning systems](https://www.bitcraze.io/documentation/system/positioning/) · [Flow Deck V2](https://www.bitcraze.io/products/flow-deck-v2/) · [Multi-ranger](https://www.bitcraze.io/multi-ranger-deck/)
 
-- **Percepción/localización:** identificar sensores, validar datos y documentar frames/unidades/tasas. Módulos 2–4: `state_monitor`, `range_processor`, `local_world_model`.
-- **Navegación/control:** waypoint, máquina de estados, evitación y lógica de seguridad. Módulos 0 y 5–8: `mission_manager`, `global_planner`, `path_processor`, `local_navigator`, `safety_supervisor`.
-- **Integración/demo:** ROS launch, conexión con Crazyswarm2, pruebas, métricas, README y pitch. Módulos 1 y 9: `cf_adapter`, `simulation_adapter`, `hackathon_bringup`, `telemetry`, `hackathon_tests`.
-
-Todos deben poder explicar el sistema y ejecutar la demo; evitar que una sola persona conozca la integración completa.
-
-## Métricas para la demo y presentación
-
-Registrar como mínimo:
-
-- waypoints completados / waypoints intentados;
-- colisiones o intervenciones manuales;
-- tiempo total de misión;
-- distancia mínima observada al obstáculo, si el sensor permite medirla;
-- número de replans, eventos de estado vencido e intervenciones del Safety Supervisor;
-- número de ensayos repetidos con éxito;
-- resultado de la [test matrix T01–T18](docs/roadmap.md#test-matrix-mínima) en simulación;
-- limitaciones conocidas (oclusiones, lecturas inválidas, espacio, baja resolución del sensor).
-
-No afirmar “autónomo y robusto” solo porque el dron se movió una vez. Mostrar evidencia y explicar condiciones de prueba.
-
-## Qué llevar
-
-La organización indica llevar **portátil y cargador**; robots, drones, impresoras 3D y herramientas se proporcionan en el sitio. Recomendado adicionalmente: acceso al repositorio/GitHub, copia local del código, extensiones/cargador adecuados y una grabación de respaldo de la simulación. No comprar hardware antes de preguntar qué estará disponible.
-
-**Nota WSL 2:** la simulación gráfica funcionó en la laptop, pero eso no verifica que un dongle USB de radio pueda usarse desde WSL. Si el control real depende de ese USB, confirmar si se usará un NUC/Jetson preparado por la organización o cómo darán acceso al dispositivo. La red 5G del recinto no debe asumirse como enlace de control del Crazyflie.
-
-## Comandos de referencia
-
-Lanzar el ejemplo simulado con visualización (terminal Ubuntu):
-
-```bash
-ros2 launch crazyflie_examples launch.py script:=hello_world backend:=sim rviz:=True
-```
-
-Inspección básica mientras el lanzamiento sigue activo, desde otra terminal Ubuntu:
-
-```bash
-ros2 node list
-ros2 topic list
-ros2 topic info /tf --verbose
-ros2 service list
-```
-
-Stack propio (más detalle en [docs/simulations.md](docs/simulations.md)):
-
-```bash
-bash scripts/build.sh && source ros2_ws/install/setup.bash
-cd ros2_ws && colcon test && colcon test-result --verbose && cd ..        # nivel 0: tests unitarios
-ros2 launch hackathon_bringup simulation.launch.py scenario:=T05_popup_obstacle rviz:=true
-ros2 launch hackathon_bringup simulation.launch.py scenario:=T09_range_dropout evaluate:=true
-bash scripts/run_all_scenarios.sh                                         # toda la matriz
-```
-
-Antes de compartir logs, revisar que no contengan datos privados. No guardar claves SSH, tokens ni archivos `.env` en el repositorio.
-
-## Referencias
-
-- [Mobile Robotics Hackathon 2026](https://mobile-robotics.eu/)
-- [Crazyswarm2 — Overview](https://imrclab.github.io/crazyswarm2/overview.html)
-- [Crazyswarm2 — Usage](https://imrclab.github.io/crazyswarm2/usage.html)
-- [Bitcraze — positioning systems](https://www.bitcraze.io/documentation/system/positioning/)
-- [Bitcraze — Flow Deck V2](https://www.bitcraze.io/products/flow-deck-v2/)
-- [Bitcraze — Multi-Ranger](https://www.bitcraze.io/multi-ranger-deck/)
-
----
-
-Documento vivo del equipo. Actualizar las casillas de estado, los sensores confirmados y la arquitectura real en cuanto los mentores den detalles.
-
-For a drone-free, one-height fixed zigzag with live RViz mapping, see
-[CF2 survey simulation](docs/cf2_survey_simulation.md). The simulator uses static
-scenarios and distinguishes ideal simulated results from hardware validation.
+Before sharing logs, check that they contain no private data. Never commit SSH keys, tokens or `.env` files.
