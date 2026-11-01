@@ -1,0 +1,85 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Global Options:
+    Background Color: 245; 245; 245
+    Fixed Frame: map
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid 0.5 m
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 10
+      Color: 190; 190; 190
+    - Class: rviz_default_plugins/Map
+      Name: Local map (/hk/map, inflated)
+      Enabled: true
+      Alpha: 0.6
+      Topic:
+        Value: /hk/map
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Name: World obstacles (simulator truth)
+      Enabled: true
+      Topic:
+        Value: /hk/sim/obstacles
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Multi-ranger rays (red hit, grey no return)
+      Enabled: true
+      Topic:
+        Value: /hk/ranges/markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Planner path - BLUE
+      Enabled: true
+      Color: 30; 80; 220
+      Alpha: 0.6
+      Line Style: Lines
+      Line Width: 0.02
+      Topic:
+        Value: /hk/path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Processed path - ORANGE
+      Enabled: true
+      Color: 240; 140; 20
+      Alpha: 1
+      Line Style: Billboards
+      Line Width: 0.03
+      Topic:
+        Value: /hk/path/processed
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/TF
+      Name: Drone and sensor frames
+      Enabled: true
+      Marker Scale: 0.4
+      Show Names: false
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top view
+      Angle: 0
+      Scale: 150
+      X: 0.0
+      Y: 0.0
+Window Geometry:
+  Width: 1100
+  Height: 700

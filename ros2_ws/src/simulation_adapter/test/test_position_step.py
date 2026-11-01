@@ -1,4 +1,4 @@
-"""TP-10, paso 1: resultados conocidos y límites del movimiento, sin ROS."""
+"""TP-10, step 1: known results and motion limits, without ROS."""
 import math
 
 import pytest

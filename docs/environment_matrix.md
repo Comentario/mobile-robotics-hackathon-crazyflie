@@ -24,8 +24,8 @@ The baseline should only be changed intentionally and documented through a pull 
 | VS Code | 1.106.3 | ✅ Verified | `code --version` | Running through VS Code Remote WSL |
 | RViz2 | ROS 2 Humble package | ✅ Verified | `rviz2 --help` | Successfully launched through Crazyswarm2 under WSLg |
 | Crazyswarm2 / Crazyflie ROS packages | 1.0.7 | ✅ Verified | `dpkg -l \| grep ros-humble-crazyflie` | Binary ROS 2 Humble packages |
-| Crazyflie firmware | 2025.02 | ✅ Verified | `git describe --tags --always` | Firmware source used for SIL Python bindings |
-| cffirmware | Built from firmware 2025.02 | ✅ Verified | `PYTHONPATH=build python3 -c "import cffirmware"` | Native Python binding compiled successfully; 22/22 firmware tests passed |
+| Crazyflie firmware | `2023.07-340-g16c56307` | ✅ Verified | `git describe --tags --always` | Firmware source used for the SIL Python bindings. The `2025.02` tag stated earlier was not established by the TP-08 review, see [crazyflie_command_interface.md](crazyflie_command_interface.md) |
+| cffirmware | Built from the local firmware checkout | ✅ Verified | `PYTHONPATH=build python3 -c "import cffirmware"` | Native Python binding compiled successfully; 22/22 firmware tests passed |
 | rowan | 1.3.2 | ✅ Verified | `python3 -c "import rowan; print(rowan.__version__)"` | Required by the Crazyswarm2 simulation backend |
 | SWIG | 4.0.2 | ✅ Verified | `swig -version` | Required to generate `cffirmware` Python bindings |
 | Crazyradio | TBD | ⬜ Event hardware | TBD | USB/radio access must be validated separately on event hardware |

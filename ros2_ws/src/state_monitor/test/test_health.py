@@ -1,26 +1,28 @@
-"""Tests unitarios de state_monitor.health (lógica pura, sin ROS).
+"""Measurement health: motion is not the same as freshness."""
+import math
+from state_monitor.health import HealthConfig,LocalizationHealthMonitor,GOOD,LOST,DEGRADED
 
-Ejecutar: colcon test --packages-select state_monitor && colcon test-result --verbose
-"""
-import pytest
 
-pytestmark = pytest.mark.skip(reason='TODO: implementar junto con TP-15 / TP-16 / TP-18')
+def monitor(): return LocalizationHealthMonitor(HealthConfig(.3,.15,.3,2))
 
-def test_fresh_pose_is_good():
-    pass
 
-def test_old_pose_is_degraded_then_lost():
-    pass
+def test_stationary_new_timestamps_are_good():
+    m=monitor()
+    for i in range(51): m.update(i*.02,(0,0,.5))
+    assert m.evaluate(1)[0]==GOOD
+
+
+def test_repeated_timestamp_and_dropout_are_lost():
+    m=monitor();m.update(0,(0,0,.5));m.update(0,(0,0,.5))
+    assert m.evaluate(.2)[0]==DEGRADED
+    assert m.evaluate(.4)[0]==LOST
+
 
 def test_nan_pose_is_lost():
-    pass
+    m=monitor();m.update(0,(0,0,.5));m.update(.01,(math.nan,0,.5))
+    assert m.evaluate(.01)[0]==LOST
 
-def test_position_jump_detected():
-    pass
 
-def test_frozen_pose_detected():
-    pass
-
-def test_speed_policy_per_status():
-    pass
-
+def test_jump_is_degraded():
+    m=monitor();m.update(0,(0,0,.5));m.update(.02,(1,0,.5))
+    assert m.evaluate(.02)[0]==DEGRADED

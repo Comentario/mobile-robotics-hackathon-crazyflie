@@ -1,0 +1,6 @@
+# Room for C01: the cooperative route (x -1.5..1.575, y -0.6..0.8) stays >= 1 m from
+# the walls, as in the area mapped by CF2. The supervisor geofence (+-2 m) still
+# limits the flight. Format: simulation_adapter/world.py
+bounds: [-2.6, -2.0, 2.6, 2.0]
+ceiling: 2.0
+obstacles: []

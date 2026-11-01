@@ -3,12 +3,13 @@
 <package format="3">
   <name>path_processor</name>
   <version>0.1.0</version>
-  <description>Convierte la ruta discreta en referencias ejecutables: simplificación y espaciado.</description>
+  <description>Turns the discrete route into executable references: simplification and spacing.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>

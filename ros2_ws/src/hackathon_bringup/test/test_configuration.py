@@ -1,10 +1,10 @@
-"""Configuración: archivos requeridos y precedencia de overlays."""
+"""Configuration: required files and overlay precedence."""
 import pytest
 from hackathon_bringup.stack import config_file, param_files, shared_frames
 
 
 def test_missing_config_has_explicit_error(tmp_path):
-    with pytest.raises(ValueError, match='No existe el archivo'):
+    with pytest.raises(ValueError, match='Configuration file does not exist'):
         param_files(str(tmp_path), 'missing.yaml', '')
 
 

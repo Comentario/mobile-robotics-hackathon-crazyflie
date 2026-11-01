@@ -1,7 +1,8 @@
-# Pasillo de 0.8 m de ancho (T04).
-# Formato: simulation_adapter/world.py
+# 1.0 m wide corridor (T04). Narrower corridors leave the side rangers within
+# safety_supervisor.critical_distance (0.3 m) of the walls and the drone hovers.
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:
-  - {type: box, center: [0.0, 0.55], size: [2.0, 0.3]}
-  - {type: box, center: [0.0, -0.55], size: [2.0, 0.3]}
+  - {type: box, center: [0.0, 0.65], size: [2.0, 0.3]}
+  - {type: box, center: [0.0, -0.65], size: [2.0, 0.3]}

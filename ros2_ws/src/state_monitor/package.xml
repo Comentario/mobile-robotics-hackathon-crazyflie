@@ -3,7 +3,7 @@
 <package format="3">
   <name>state_monitor</name>
   <version>0.1.0</version>
-  <description>Normaliza el estado del dron, publica TF map->base_link y evalúa la salud de la localización.</description>
+  <description>Normalizes the drone state, publishes TF map->base_link and evaluates localization health.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

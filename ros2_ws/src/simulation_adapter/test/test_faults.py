@@ -104,6 +104,7 @@ def test_pose_freeze_repeats_last_pose():
     )
 
     assert result['x'] == pytest.approx(2.0)
+    assert result['stamp_t'] == pytest.approx(5.0)
 
 
 def test_pose_dropout_publishes_nothing():
@@ -143,3 +144,25 @@ def test_command_pause_drops_commands():
     assert not injector.drop_command(2.0)
     assert injector.drop_command(3.5)
     assert not injector.drop_command(5.0)
+
+
+def test_pose_delay_keeps_sample_time():
+    injector = FaultInjector([
+        {
+            'type': 'pose_delay',
+            'delay': 0.5,
+            't_start': 5.0,
+            't_end': 10.0,
+        }
+    ])
+
+    history = [
+        (5.4, {'x': 1.0, 'y': 0.0, 'z': 0.5, 'yaw': 0.0}),
+        (5.6, {'x': 2.0, 'y': 0.0, 'z': 0.5, 'yaw': 0.0}),
+        (6.0, {'x': 3.0, 'y': 0.0, 'z': 0.5, 'yaw': 0.0}),
+    ]
+
+    result = injector.apply_to_pose(6.0, history[-1][1], history)
+
+    assert result['x'] == pytest.approx(1.0)
+    assert result['stamp_t'] == pytest.approx(5.4)

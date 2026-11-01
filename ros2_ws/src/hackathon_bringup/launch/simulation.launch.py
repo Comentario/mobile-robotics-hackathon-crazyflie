@@ -1,6 +1,6 @@
-"""Stack completo contra el simulador propio (TP-12, VS-1 a VS-4).
+"""Full stack against our own simulator (TP-12, VS-1 to VS-4).
 
-Uso:
+Usage:
   ros2 launch hackathon_bringup simulation.launch.py
   ros2 launch hackathon_bringup simulation.launch.py scenario:=T05_popup_obstacle
   ros2 launch hackathon_bringup simulation.launch.py scenario:=T09_range_dropout evaluate:=true
@@ -41,13 +41,14 @@ def _setup(context):
         parameters=params + [extra, {
             'world_file': world_file,
             'scenario_file': scenario_file,
+            'publish_tf': False, # state_monitor is the only owner of map -> base_link
         }],
     )]
     nodes += static_sensor_tfs(config_dir, shared_frames(params))
     nodes += stack_nodes(params, mission_file, extra)
 
     if arg('evaluate') == 'true':
-        # Al terminar la evaluación se cierra todo el launch (necesario para run_all_scenarios.sh).
+        # When the evaluation ends the whole launch shuts down (needed by run_all_scenarios.sh).
         runner = Node(
             package='hackathon_tests', executable='run_scenario', name='scenario_runner',
             output='screen', parameters=params + [extra, {'scenario_file': scenario_file}])
@@ -58,7 +59,9 @@ def _setup(context):
     if arg('rviz') == 'true':
         rviz_config = os.path.join(share, 'rviz', 'hackathon.rviz')
         rviz_args = ['-d', rviz_config] if os.path.exists(rviz_config) else []
-        nodes.append(Node(package='rviz2', executable='rviz2', arguments=rviz_args))
+        # Software rendering: avoids GPU/shader problems in WSLg.
+        nodes.append(Node(package='rviz2', executable='rviz2', arguments=rviz_args,
+                          additional_env={'LIBGL_ALWAYS_SOFTWARE': '1', 'QT_QPA_PLATFORM': 'xcb'}))
 
     processes = [node for node in nodes if isinstance(node, Node)]
     return stop_on_exit(processes) + nodes
@@ -67,13 +70,13 @@ def _setup(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('scenario', default_value='T01_single_waypoint',
-                              description='Nombre de config/scenarios/<scenario>.yaml'),
+                              description='Name of config/scenarios/<scenario>.yaml'),
         DeclareLaunchArgument('params', default_value='simulation.yaml',
-                              description='Parámetros base en config/'),
+                              description='Base parameters in config/'),
         DeclareLaunchArgument('overlay', default_value='',
-                              description='Parámetros que sobrescriben la base, p. ej. conservative.yaml'),
+                              description='Parameters overriding the base, e.g. conservative.yaml'),
         DeclareLaunchArgument('evaluate', default_value='false',
-                              description='true: lanza hackathon_tests/run_scenario (pass/fail)'),
+                              description='true: launches hackathon_tests/run_scenario (pass/fail)'),
         DeclareLaunchArgument('rviz', default_value='false'),
         OpaqueFunction(function=_setup),
     ])

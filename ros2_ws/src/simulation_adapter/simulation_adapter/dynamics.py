@@ -1,34 +1,34 @@
-"""Modelo cinemático simple del dron (TP-10).
+"""Simple kinematic drone model (TP-10).
 
-No modela la física del quadrotor: el controlador onboard real se aproxima con una
-respuesta de primer orden hacia el setpoint, limitada en velocidad y aceleración.
+It does not model quadrotor physics: the real onboard controller is approximated
+with a first-order response towards the setpoint, limited in speed and acceleration.
 """
 from dataclasses import dataclass, replace
 import math
 
 
 def position_step(position, target, max_speed, dt):
-    """Primer paso de TP-10: movimiento recto con velocidad máxima, sin aceleración.
+    """First TP-10 step: straight motion at maximum speed, without acceleration.
 
-    position/target: tuplas XYZ en metros; max_speed: m/s; dt: segundos.
-    Devuelve (nueva posición, velocidad XYZ). No sobrepasa el objetivo.
-    Todavía no está conectado a KinematicDrone ni al nodo ROS.
+    position/target: XYZ tuples in metres; max_speed: m/s; dt: seconds.
+    Returns (new position, XYZ velocity). Never overshoots the target.
+    Not connected to KinematicDrone or to the ROS node.
     """
     if len(position) != 3 or len(target) != 3:
-        raise ValueError('position y target deben tener tres coordenadas')
+        raise ValueError('position and target must have three coordinates')
     if not all(math.isfinite(value) for value in (*position, *target, max_speed, dt)):
-        raise ValueError('Las coordenadas, velocidad y tiempo deben ser finitos')
+        raise ValueError('Coordinates, speed and time must be finite')
     if max_speed <= 0 or dt <= 0:
-        raise ValueError('max_speed y dt deben ser positivos')
+        raise ValueError('max_speed and dt must be positive')
 
     displacement = tuple(goal - current for current, goal in zip(position, target))
     distance = math.hypot(*displacement)
     if not math.isfinite(distance):
-        raise ValueError('La distancia entre coordenadas es demasiado grande')
+        raise ValueError('The distance between coordinates is too large')
     if distance == 0:
         return tuple(position), (0.0, 0.0, 0.0)
 
-    # Se limita la longitud del movimiento completo, no cada eje por separado.
+    # The length of the whole motion is limited, not each axis separately.
     step_distance = min(distance, max_speed * dt)
     fraction = step_distance / distance
     movement = tuple(value * fraction for value in displacement)
@@ -52,34 +52,34 @@ class DroneState:
 
 
 def accelerated_position_step(state, target, max_speed, max_accel, dt, response_time=1.0):
-    """TP-10, paso 2: seguimiento de posición con velocidad y aceleración limitadas.
+    """TP-10, step 2: position tracking with limited speed and acceleration.
 
-    Devuelve un nuevo DroneState sin modificar el recibido. response_time (s)
-    reduce la velocidad deseada al acercarse al objetivo. La distancia de frenado
-    también limita esa velocidad. No cambia yaw ni flying ni simula motores.
-    Una referencia que cambia bruscamente puede provocar sobrepaso por inercia;
-    no se fuerza la posición al objetivo ni se anula la velocidad instantáneamente.
+    Returns a new DroneState without modifying the given one. response_time (s)
+    reduces the desired velocity when approaching the target. The stopping distance
+    also limits that velocity. It does not change yaw or flying nor simulate motors.
+    A reference that changes abruptly can cause overshoot due to inertia; the
+    position is never forced to the target nor the velocity zeroed instantly.
     """
     if not isinstance(state, DroneState) or len(target) != 3:
-        raise ValueError('Se requiere DroneState y un objetivo XYZ')
+        raise ValueError('A DroneState and an XYZ target are required')
     position = (state.x, state.y, state.z)
     velocity = (state.vx, state.vy, state.vz)
     values = (*position, *velocity, state.yaw, *target, max_speed, max_accel, dt, response_time)
     if not all(math.isfinite(value) for value in values):
-        raise ValueError('Estado, objetivo y parámetros deben ser finitos')
+        raise ValueError('State, target and parameters must be finite')
     if min(max_speed, max_accel, dt, response_time) <= 0 or dt > response_time:
-        raise ValueError('Parámetros positivos; dt no debe superar response_time')
+        raise ValueError('Parameters must be positive; dt must not exceed response_time')
     if math.hypot(*velocity) > max_speed + 1e-12:
-        raise ValueError('La velocidad inicial supera max_speed')
+        raise ValueError('The initial velocity exceeds max_speed')
 
     displacement = tuple(goal - current for current, goal in zip(position, target))
     distance = math.hypot(*displacement)
     if not math.isfinite(distance):
-        raise ValueError('La distancia entre coordenadas es demasiado grande')
+        raise ValueError('The distance between coordinates is too large')
     if distance == 0:
         desired_velocity = (0.0, 0.0, 0.0)
     else:
-        # v² = 2*a*d: velocidad desde la que aún se puede frenar en distancia d.
+        # v^2 = 2*a*d: speed from which the drone can still stop within distance d.
         desired_speed = min(max_speed, distance / response_time, math.sqrt(2 * max_accel * distance))
         desired_velocity = tuple(value / distance * desired_speed for value in displacement)
 
@@ -87,7 +87,7 @@ def accelerated_position_step(state, target, max_speed, max_accel, dt, response_
     change_norm = math.hypot(*velocity_change)
     fraction = min(1.0, max_accel * dt / change_norm) if change_norm else 0.0
     next_velocity = tuple(current + change * fraction for current, change in zip(velocity, velocity_change))
-    # Promedio entre velocidad inicial y final: aceleración constante durante dt.
+    # Average of initial and final velocity: constant acceleration during dt.
     next_position = tuple(current + (before + after) * 0.5 * dt
                           for current, before, after in zip(position, velocity, next_velocity))
     return replace(state, x=next_position[0], y=next_position[1], z=next_position[2],
@@ -96,7 +96,7 @@ def accelerated_position_step(state, target, max_speed, max_accel, dt, response_
 
 @dataclass(frozen=True)
 class MotionCommand:
-    """Referencia independiente de ROS: 0=POSITION, 1=VELOCITY XY, 2=HOVER."""
+    """ROS-independent reference: 0=POSITION, 1=VELOCITY XY, 2=HOVER."""
     mode: int
     position: tuple = (0.0, 0.0, 0.0)
     yaw: float = 0.0
@@ -108,18 +108,18 @@ class KinematicDrone:
     def __init__(self, max_speed, max_accel, command_watchdog, initial_state=None,
                  response_time=1.0, position_tolerance=0.01, settle_speed=0.02,
                  gravity=9.81, max_yaw_rate=1.5):
-        """command_watchdog: s sin setpoints tras los que el dron hace hover.
+        """command_watchdog: s without setpoints after which the drone hovers.
 
-        Es una política del simulador propio, no una reproducción del watchdog
-        real: TP-08 documenta que el firmware no garantiza hover ante timeout.
+        This is a policy of our own simulator, not a reproduction of the real
+        watchdog: TP-08 documents that the firmware does not guarantee hover on timeout.
         """
         parameters = (max_speed, max_accel, command_watchdog, response_time,
                       position_tolerance, settle_speed, gravity, max_yaw_rate)
         if not all(math.isfinite(value) and value > 0 for value in parameters):
-            raise ValueError('Límites y tiempos deben ser finitos y positivos')
+            raise ValueError('Limits and times must be finite and positive')
         self.state = replace(initial_state) if initial_state is not None else DroneState()
         if self.state.z < 0:
-            raise ValueError('El estado inicial no puede estar debajo del suelo')
+            raise ValueError('The initial state cannot be below the ground')
         accelerated_position_step(self.state, (self.state.x, self.state.y, self.state.z),
                                   max_speed, max_accel, min(0.01, response_time), response_time)
         self.max_speed = max_speed
@@ -143,23 +143,23 @@ class KinematicDrone:
         self.maneuver_duration = 0.0
 
     def set_command(self, t, setpoint):
-        """Acepta POSITION, VELOCITY XY y HOVER únicamente en vuelo libre."""
+        """Accept POSITION, VELOCITY XY and HOVER only in free flight."""
         if self.phase != 'FLYING':
             raise ValueError(f'Comando bloqueado durante {self.phase}')
         if not math.isfinite(t) or len(setpoint.position) != 3:
-            raise ValueError('Timestamp y posición inválidos')
+            raise ValueError('Invalid timestamp and position')
         if not all(math.isfinite(value) for value in (*setpoint.position, setpoint.yaw)):
-            raise ValueError('Referencia no finita')
+            raise ValueError('Non-finite reference')
         if self.last_command_time is not None and t < self.last_command_time:
-            raise ValueError('Comando fuera de orden')
+            raise ValueError('Out-of-order command')
         if setpoint.mode in (0, 1):
             if setpoint.position[2] < 0:
-                raise ValueError('El objetivo no puede estar debajo del suelo')
+                raise ValueError('The target cannot be below the ground')
             if setpoint.mode == 1:
                 if len(setpoint.velocity) != 3 or not all(math.isfinite(v) for v in setpoint.velocity):
-                    raise ValueError('Velocidad inválida')
+                    raise ValueError('Invalid velocity')
                 if abs(setpoint.velocity[2]) > 1e-9:
-                    raise ValueError('VELOCITY mantiene position.z; velocity.z debe ser cero')
+                    raise ValueError('VELOCITY keeps position.z; velocity.z must be zero')
                 norm = math.hypot(*setpoint.velocity)
                 scale = min(1.0, self.max_speed / norm) if norm else 1.0
                 self.velocity_reference = tuple(v * scale for v in setpoint.velocity)
@@ -178,7 +178,7 @@ class KinematicDrone:
 
     def _begin_maneuver(self, phase, height, duration):
         if not math.isfinite(duration) or duration <= 0:
-            raise ValueError('La duración debe ser finita y positiva')
+            raise ValueError('The duration must be finite and positive')
         self.phase = phase
         self.maneuver_start = (self.state.x, self.state.y, self.state.z)
         self.maneuver_goal = (self.state.x, self.state.y, height)
@@ -190,29 +190,29 @@ class KinematicDrone:
 
     def takeoff(self, height, duration):
         if self.phase != 'GROUND':
-            raise ValueError('El despegue solo se acepta desde el suelo')
+            raise ValueError('Takeoff is only accepted from the ground')
         if not math.isfinite(height) or height <= 0:
-            raise ValueError('La altura debe ser finita y positiva')
+            raise ValueError('The height must be finite and positive')
         self._begin_maneuver('TAKING_OFF', height, duration)
 
     def land(self, duration):
         if not math.isfinite(duration) or duration <= 0:
-            raise ValueError('La duración debe ser finita y positiva')
+            raise ValueError('The duration must be finite and positive')
         if self.phase == 'EMERGENCY':
-            raise ValueError('Emergencia enclavada: reinicia el simulador')
+            raise ValueError('Emergency latched: restart the simulator')
         if self.phase in ('GROUND', 'LANDING'):
-            return  # Peticiones repetidas no reinician ni prolongan el aterrizaje.
+            return  # Repeated requests neither restart nor extend the landing.
         self._begin_maneuver('LANDING', 0.0, duration)
 
     def emergency_stop(self):
-        """Corte simulado: caída con gravedad hasta el suelo, bloqueo hasta reinicio."""
+        """Simulated cut-off: gravity fall to the ground, locked until restart."""
         self.phase = 'EMERGENCY'
         self.last_command_time = None
 
     def step(self, t, dt):
-        """Avanza la simulación dt segundos y devuelve el DroneState."""
+        """Advance the simulation by dt seconds and return the DroneState."""
         if not math.isfinite(t) or not math.isfinite(dt) or dt <= 0 or dt > self.response_time:
-            raise ValueError('Tiempo inválido; dt debe ser positivo y <= response_time')
+            raise ValueError('Invalid time; dt must be positive and <= response_time')
         state = self.state
         if self.phase == 'GROUND':
             return replace(state)
@@ -228,7 +228,7 @@ class KinematicDrone:
         if maneuver:
             self.maneuver_elapsed += dt
             progress = min(1.0, self.maneuver_elapsed / self.maneuver_duration)
-            # Referencia suave: velocidad y aceleración de referencia cero en extremos.
+            # Smooth reference: zero reference velocity and acceleration at both ends.
             fraction = 10 * progress**3 - 15 * progress**4 + 6 * progress**5
             self.target = tuple(start + (goal - start) * fraction
                                 for start, goal in zip(self.maneuver_start, self.maneuver_goal))
@@ -269,7 +269,7 @@ class KinematicDrone:
                 self.phase = 'FLYING'
                 self.target = self.maneuver_goal
             else:
-                # Contacto con el suelo dentro de la tolerancia: velocidad nula.
+                # Ground contact within tolerance: zero velocity.
                 self.phase = 'GROUND'
                 self.state = replace(self.state, z=0.0, vx=0.0, vy=0.0, vz=0.0, flying=False)
                 self.target = (self.state.x, self.state.y, 0.0)

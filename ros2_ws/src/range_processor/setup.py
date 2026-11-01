@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Valida, filtra y transforma al mapa las lecturas del Multi-ranger.',
+    description='Validates, filters and transforms the Multi-ranger readings into the map.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

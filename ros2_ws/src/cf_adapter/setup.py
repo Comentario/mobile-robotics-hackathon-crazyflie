@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Adaptador entre la API propia (/hk/...) y Crazyswarm2. Único paquete que conoce nombres de Crazyswarm2.',
+    description='Adapter between our own API (/hk/...) and Crazyswarm2. The only package that knows Crazyswarm2 names.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

@@ -1,5 +1,5 @@
-# Waypoint fuera del geofence (T14).
-# [x, y, z] en metros, frame map.
+# Waypoint outside the geofence (T14).
+# [x, y, z] in metres, map frame.
 frame_id: map
 waypoints:
   - [3.0, 0.0, 0.5]

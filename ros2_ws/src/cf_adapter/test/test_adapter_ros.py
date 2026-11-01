@@ -300,3 +300,39 @@ def test_emergency_preempts_pending_priority_handover(rig):
             pending.set_result(None)
         for _ in range(5):
             executor.spin_once(timeout_sec=0.01)
+
+
+def test_flow_only_publishes_without_scan_and_preserves_missing_sensors(rig):
+    adapter, peer, executor, got, pubs, wait, state, command = rig
+    adapter.flow_only = True
+    wait(lambda: pubs['vertical'].get_subscription_count())
+    msg = LogDataGeneric()
+    msg.header.stamp = adapter.get_clock().now().to_msg()
+    msg.values = [200.0]
+    pubs['vertical'].publish(msg)
+    wait(lambda: len(got['ranges']) == 1)
+    result = got['ranges'][-1]
+    assert result.down == pytest.approx(.2)
+    assert result.header.frame_id == 'base_link'
+    assert result.header.stamp == msg.header.stamp
+    assert all(math.isnan(getattr(result, name)) for name in ('front','back','left','right','up'))
+    # A scan cannot claim horizontal measurements when the deck is absent.
+    scan = LaserScan()
+    scan.header.stamp = adapter.get_clock().now().to_msg()
+    adapter._scan_callback(scan)
+    assert len(got['ranges']) == 1
+    # Wrong logging schema and expired samples must not be republished.
+    msg.values = [1000.0, 200.0]
+    adapter._vertical_callback(msg)
+    msg.values = [200.0]
+    msg.header.stamp.sec -= 1
+    adapter._vertical_callback(msg)
+    assert len(got['ranges']) == 1
+    for value, expected in ((0.0,-math.inf),(5000.0,math.inf),(math.nan,math.nan)):
+        msg.header.stamp = adapter.get_clock().now().to_msg()
+        msg.values = [value]
+        previous = len(got['ranges'])
+        pubs['vertical'].publish(msg)
+        wait(lambda: len(got['ranges']) > previous)
+        actual = got['ranges'][-1].down
+        assert math.isnan(actual) if math.isnan(expected) else actual == expected

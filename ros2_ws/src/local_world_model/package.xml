@@ -3,13 +3,14 @@
 <package format="3">
   <name>local_world_model</name>
   <version>0.1.0</version>
-  <description>Rejilla de ocupación 2D móvil alrededor del dron, con inflado y caducidad de obstáculos.</description>
+  <description>Rolling 2D occupancy grid around the drone, with obstacle inflation and decay.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>hackathon_interfaces</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>range_processor</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <test_depend>python3-pytest</test_depend>
 

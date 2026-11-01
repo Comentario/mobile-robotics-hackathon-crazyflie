@@ -89,7 +89,7 @@ def main():
             advance(0.1)
             time.sleep(5)
             if viewer is not None and viewer.poll() is not None:
-                raise RuntimeError('RViz no pudo abrirse; revisa DISPLAY y el soporte gráfico de Ubuntu')
+                raise RuntimeError('RViz could not be opened; check DISPLAY and the Ubuntu graphics support')
             wall_start = time.monotonic() - server.backend.time()
         print('1. Despegue a 0.5 m', flush=True)
         request = Takeoff.Request()
@@ -116,11 +116,11 @@ def main():
             advance(0.02)
         results['full_state_stream'] = advance(0.1)
         near(results['full_state_stream'], [0.4, 0, 0.5])
-        print('4. Interrupción de comandos durante 3 segundos simulados', flush=True)
+        print('4. Command interruption for 3 simulated seconds', flush=True)
         results['stream_stopped_3s'] = advance(3)
         near(results['stream_stopped_3s'], [0.4, 0, 0.5])
 
-        print('5. Callbacks sin implementar y transición go_to rechazada', flush=True)
+        print('5. Unimplemented callbacks and rejected go_to transition', flush=True)
         mode = server.cfs['cf231'].mode
         server._notify_setpoints_stop_callback(
             NotifySetpointsStop.Request(), NotifySetpointsStop.Response(), name='cf231')
@@ -144,7 +144,7 @@ def main():
         near(results['land_after_stream'], [0.4, 0, 0], tolerance=0.15)
         print(json.dumps({'status': 'PASS', 'results': results}, indent=2))
         if viewer is not None:
-            input('Secuencia completada. Pulsa Enter para cerrar RViz y el simulador. ')
+            input('Sequence completed. Press Enter to close RViz and the simulator. ')
     finally:
         server.visualizations = visualizations
         server.on_shutdown_callback()

@@ -3,7 +3,7 @@
 <package format="3">
   <name>cf_adapter</name>
   <version>0.1.0</version>
-  <description>Adaptador entre la API propia (/hk/...) y Crazyswarm2. Único paquete que conoce nombres de Crazyswarm2.</description>
+  <description>Adapter between our own API (/hk/...) and Crazyswarm2. The only package that knows Crazyswarm2 names.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

@@ -3,7 +3,7 @@
 <package format="3">
   <name>safety_supervisor</name>
   <version>0.1.0</version>
-  <description>Supervisor de seguridad independiente del planner: puede anular cualquier comando.</description>
+  <description>Safety supervisor independent of the planner: it can override any command.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

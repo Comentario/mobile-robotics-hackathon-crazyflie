@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Convierte la ruta discreta en referencias ejecutables: simplificación y espaciado.',
+    description='Turns the discrete route into executable references: simplification and spacing.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

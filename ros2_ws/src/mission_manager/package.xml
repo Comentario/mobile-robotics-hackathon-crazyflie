@@ -3,7 +3,7 @@
 <package format="3">
   <name>mission_manager</name>
   <version>0.1.0</version>
-  <description>Secuencia de waypoints y máquina de estados de la misión.</description>
+  <description>Waypoint sequence and mission state machine.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

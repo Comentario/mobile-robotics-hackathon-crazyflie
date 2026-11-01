@@ -1,8 +1,8 @@
-# Parámetros para el simulador propio. Valores de simulación, NO del evento.
-# Lista completa y significado: docs/roadmap.md, "Parámetros configurables".
+# Parameters for our own simulator. Simulation values, NOT the event ones.
+# Full list and meaning: docs/roadmap.md, "Configurable parameters".
 
-# Sección /** = parámetros compartidos por todos los nodos (una sola fuente de verdad).
-# Cada otra sección = nombre del nodo (= nombre del paquete).
+# Section /** = parameters shared by all nodes (a single source of truth).
+# Every other section = node name (= package name).
 /**:
   ros__parameters:
     map_frame: map
@@ -10,8 +10,8 @@
     z_min: 0.2
     z_nominal: 0.5
     z_max: 1.5
-    state_timeout: 0.3          # s sin pose -> LOST / HOVER
-    range_timeout: 0.3          # s sin rangos -> rangos vencidos
+    state_timeout: 0.3          # s without pose -> LOST / HOVER
+    range_timeout: 0.3          # s without ranges -> stale ranges
     warning_distance: 0.6    # m
     critical_distance: 0.3  # m
     ttc_threshold: 1.5          # s
@@ -21,19 +21,19 @@ simulation_adapter:
     sim_rate: 100.0
     state_rate: 50.0
     range_rate: 20.0
-    range_min: 0.02          # m, límites de los sensores sintéticos
+    range_min: 0.02          # m, limits of the synthetic sensors
     range_max: 4.0
-    max_yaw_rate: 1.5        # rad/s, modelo cinemático
-    random_seed: 0          # ruido reproducible
+    max_yaw_rate: 1.5        # rad/s, kinematic model
+    random_seed: 0          # reproducible noise
     max_speed: 1.0
     max_accel: 2.0
-    response_time: 1.0       # s; reduce la velocidad deseada cerca del objetivo
-    position_tolerance: 0.01 # m; llegada de maniobras / contacto simulado con suelo
-    settle_speed: 0.02       # m/s; velocidad máxima para confirmar llegada
-    gravity: 9.81            # m/s²; solo caída de emergencia del simulador
+    response_time: 1.0       # s; reduces the desired velocity near the target
+    position_tolerance: 0.01 # m; manoeuvre arrival / simulated ground contact
+    settle_speed: 0.02       # m/s; maximum speed to confirm arrival
+    gravity: 9.81            # m/s^2; only the simulator emergency fall
     range_noise_std: 0.01
     pose_noise_std: 0.005
-    command_watchdog: 0.5     # s sin setpoints -> hover; política del simulador propio
+    command_watchdog: 0.5     # s without setpoints -> hover; policy of our own simulator
 
 cf_adapter:
   ros__parameters:
@@ -61,9 +61,9 @@ range_processor:
 local_world_model:
   ros__parameters:
     map_resolution: 0.05
-    map_width: 6.0
-    map_height: 6.0
-    obstacle_inflation_radius: 0.25
+    map_width: 8.0      # covers the 4x4 m room from any position inside it
+    map_height: 8.0
+    obstacle_inflation_radius: 0.30   # drone radius + margin for corner cutting (T03)
     obstacle_decay_time: 5.0
     map_rate: 10.0
 
@@ -77,7 +77,7 @@ mission_manager:
 
 global_planner:
   ros__parameters:
-    planner_mode: direct      # direct (P0, sin mapa) | astar (P1)
+    planner_mode: astar       # direct (P0, no map) | astar (P1)
     planner_rate: 2.0
     replan_period: 2.0
     connectivity: 8

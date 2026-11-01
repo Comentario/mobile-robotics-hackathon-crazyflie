@@ -1,14 +1,19 @@
-"""Tests unitarios de safety_supervisor.watchdog (lógica pura, sin ROS).
+"""Unit tests for safety_supervisor.watchdog (pure logic, no ROS).
 
-Ejecutar: colcon test --packages-select safety_supervisor && colcon test-result --verbose
+Run: colcon test --packages-select safety_supervisor && colcon test-result --verbose
 """
-import pytest
+from safety_supervisor.watchdog import StreamWatchdog
 
-pytestmark = pytest.mark.skip(reason='TODO: implementar junto con TP-37 / TP-38 / TP-39')
 
 def test_never_stamped_is_stale():
-    pass
+    watchdog = StreamWatchdog(0.3)
+    assert watchdog.stale(0.0)
+    assert not watchdog.received_any()
+
 
 def test_stale_after_timeout():
-    pass
-
+    watchdog = StreamWatchdog(0.3)
+    watchdog.stamp(10.0)
+    assert watchdog.received_any()
+    assert not watchdog.stale(10.29)
+    assert watchdog.stale(10.31)

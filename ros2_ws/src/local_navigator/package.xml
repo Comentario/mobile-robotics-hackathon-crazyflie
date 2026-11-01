@@ -3,7 +3,7 @@
 <package format="3">
   <name>local_navigator</name>
   <version>0.1.0</version>
-  <description>Path follower por lookahead con evitación reactiva usando el Multi-ranger.</description>
+  <description>Lookahead path follower with reactive avoidance using the Multi-ranger.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

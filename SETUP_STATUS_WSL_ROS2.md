@@ -1,28 +1,28 @@
-# Estado de instalación y validación — WSL 2 + ROS 2 + Crazyswarm2
+# Installation and validation status — WSL 2 + ROS 2 + Crazyswarm2
 
-Documento complementario al [README principal](README.md). Su propósito es que el equipo pueda reproducir el punto de partida y distinguir lo validado de lo pendiente.
+Companion document to the [main README](README.md). Its purpose is to let the team reproduce the starting point and tell what has been validated from what is still pending.
 
-> **Resumen:** se validó una instalación de Ubuntu 22.04 sobre WSL 2 con ROS 2 Humble y Crazyswarm2. El ejemplo `hello_world` funcionó con el backend `sim` y pudo visualizarse en RViz2 al activar `rviz:=True`. **Aún no** se implementó navegación autónoma propia ni se probó el enlace con un Crazyflie físico.
+> **Summary:** an Ubuntu 22.04 installation on WSL 2 with ROS 2 Humble and Crazyswarm2 was validated. The `hello_world` example ran with the `sim` backend and could be visualized in RViz2 with `rviz:=True`. This document covers the base environment; the team's own navigation stack and its simulation results are described in the README. No link with a physical Crazyflie was tested from this setup.
 
-## 1. Entorno validado
+## 1. Validated environment
 
-| Elemento | Estado observado |
+| Item | Observed status |
 |---|---|
-| Windows + WSL 2 | Ubuntu 22.04 instalado y ejecutándose bajo WSL 2. |
-| Usuario Linux | `asus` en la laptop de desarrollo. Otros colaboradores tendrán sus propios usuarios. |
-| Almacenamiento de Ubuntu | La distribución se movió a `E:\WSL\Ubuntu-22.04` para conservar espacio en C:. |
-| ROS 2 | ROS 2 Humble Desktop instalado en Ubuntu 22.04. |
-| Crazyswarm2 | Paquetes binarios `ros-humble-crazyflie*` instalados desde apt. |
-| Bindings firmware | `cffirmware` se hizo importable en Python y dejó de bloquear el servidor simulado. |
-| Dependencia Python | `rowan` se instaló para el servidor simulado. |
-| RViz2 | Abrió en WSLg al lanzar con `rviz:=True`. |
-| GitHub | Repositorio remoto `Comentario/mobile-robotics-hackathon-crazyflie`, rama local `main`; el usuario comprobó autenticación SSH y que `origin` aparece. |
+| Windows + WSL 2 | Ubuntu 22.04 installed and running under WSL 2. |
+| Linux user | `asus` on the development laptop. Other collaborators will have their own users. |
+| Ubuntu storage | The distribution was moved to `E:\WSL\Ubuntu-22.04` to save space on C:. |
+| ROS 2 | ROS 2 Humble Desktop installed on Ubuntu 22.04. |
+| Crazyswarm2 | Binary `ros-humble-crazyflie*` packages installed from apt. |
+| Firmware bindings | `cffirmware` became importable in Python and no longer blocked the simulated server. |
+| Python dependency | `rowan` was installed for the simulated server. |
+| RViz2 | Opened in WSLg when launched with `rviz:=True`. |
+| GitHub | Remote repository `Comentario/mobile-robotics-hackathon-crazyflie`, local branch `main`; the user checked SSH authentication and that `origin` is listed. |
 
-La instalación de Python fue resuelta manualmente en la laptop original; no hay todavía un script de provisión verificado para recrear todo desde cero en los equipos de los colaboradores.
+The Python installation was solved manually on the original laptop; there is no verified provisioning script yet to recreate everything from scratch on the collaborators' machines.
 
-## 2. Arranque del entorno ROS 2
+## 2. Starting the ROS 2 environment
 
-Abrir Ubuntu 22.04 (WSL) y comprobar ROS 2:
+Open Ubuntu 22.04 (WSL) and check ROS 2:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -30,70 +30,70 @@ echo "$ROS_DISTRO"
 ros2 --help
 ```
 
-Se espera que `echo "$ROS_DISTRO"` muestre `humble`. Si `source` se ejecuta en una terminal nueva, aplica solo a esa terminal. En la laptop original se configuró el entorno para las sesiones Ubuntu; cada colaborador debe verificar su propia instalación.
+`echo "$ROS_DISTRO"` is expected to print `humble`. When `source` runs in a new terminal, it only applies to that terminal. On the original laptop the environment was configured for the Ubuntu sessions; every collaborator must check their own installation.
 
-Comprobar que los paquetes Crazyflie están instalados:
+Check that the Crazyflie packages are installed:
 
 ```bash
 ros2 pkg list | grep '^crazyflie'
 ```
 
-La instalación original mostró paquetes como `crazyflie`, `crazyflie_description`, `crazyflie_examples`, `crazyflie_interfaces`, `crazyflie_py`, `crazyflie_server_cpp`, `crazyflie_server_py` y `crazyflie_sim`.
+The original installation listed packages such as `crazyflie`, `crazyflie_description`, `crazyflie_examples`, `crazyflie_interfaces`, `crazyflie_py`, `crazyflie_server_cpp`, `crazyflie_server_py` and `crazyflie_sim`.
 
-## 3. Dependencias de la simulación que se resolvieron
+## 3. Simulation dependencies that were solved
 
 ### `cffirmware`
 
-Al inicio, el servidor terminó con `ModuleNotFoundError: No module named 'cffirmware'`. Se prepararon y compilaron los bindings Python del firmware Crazyflie en `~/crazyflie-firmware`; tras resolver ese módulo, el servidor pudo avanzar a la siguiente dependencia. En el entorno original se llegó a verificar la importación de `cffirmware`.
+At first the server ended with `ModuleNotFoundError: No module named 'cffirmware'`. The Python bindings of the Crazyflie firmware were prepared and built in `~/crazyflie-firmware`; once that module was available, the server moved on to the next dependency. The `cffirmware` import was verified in the original environment.
 
-Comprobación para la laptop original:
+Check for the original laptop:
 
 ```bash
-python3 -c "import cffirmware; print('cffirmware listo')"
+python3 -c "import cffirmware; print('cffirmware ready')"
 ```
 
-La ruta de construcción del firmware estaba en `~/crazyflie-firmware/build`. Si el import falla en una terminal nueva, revisar el entorno Python y la ruta real antes de recompilar:
+The firmware build path was `~/crazyflie-firmware/build`. If the import fails in a new terminal, check the Python environment and the real path before rebuilding:
 
 ```bash
 export PYTHONPATH="$HOME/crazyflie-firmware/build${PYTHONPATH:+:$PYTHONPATH}"
-python3 -c "import cffirmware; print('cffirmware listo')"
+python3 -c "import cffirmware; print('cffirmware ready')"
 ```
 
-Esta ruta es específica de la instalación que se hizo en la laptop original; no asumir que ya existe en otro computador.
+This path is specific to the installation made on the original laptop; do not assume it already exists on another computer.
 
 ### `rowan`
 
-Después apareció `ModuleNotFoundError: No module named 'rowan'`. Como `pip` no estaba instalado, se instaló `python3-pip` y luego `rowan` para el usuario Linux.
+Next, `ModuleNotFoundError: No module named 'rowan'` appeared. Since `pip` was not installed, `python3-pip` was installed and then `rowan` for the Linux user.
 
 ```bash
 python3 -m pip install --user rowan
-python3 -c "import rowan; print('rowan listo')"
+python3 -c "import rowan; print('rowan ready')"
 ```
 
-No se guarda un entorno virtual ni una lista completa de dependencias Python en el repositorio todavía; esta es una instalación manual confirmada en el entorno original.
+The repository does not store a virtual environment or a full list of Python dependencies yet; this is a manual installation confirmed in the original environment.
 
-## 4. Simulación que sí se ejecutó
+## 4. Simulation that did run
 
-En Ubuntu, iniciar:
+In Ubuntu, start:
 
 ```bash
 ros2 launch crazyflie_examples launch.py script:=hello_world backend:=sim rviz:=True
 ```
 
-Resultado observado:
+Observed result:
 
-- El launch inició el servidor `crazyflie_server`, `teleop`, `joy_node`, `hello_world` y RViz2.
-- El servidor registró `takeoff(height=1.0 m, duration=2.5 s)` y, posteriormente, `land(...)` para `cf231`.
-- `hello_world` terminó limpiamente.
-- RViz2 mostró la visualización cuando se usó `rviz:=True`.
+- The launch started the `crazyflie_server`, `teleop`, `joy_node`, `hello_world` and RViz2.
+- The server logged `takeoff(height=1.0 m, duration=2.5 s)` and later `land(...)` for `cf231`.
+- `hello_world` finished cleanly.
+- RViz2 showed the visualization when `rviz:=True` was used.
 
-La opción `rviz:=True` fue necesaria en este lanzamiento; sin ella no apareció la ventana. El mensaje `Stereo is NOT SUPPORTED` no impidió visualizar y no se relacionó con audio. La salida también mostró OpenGL 4.2.
+The `rviz:=True` option was required for this launch; without it the window did not appear. The `Stereo is NOT SUPPORTED` message did not prevent the visualization and is unrelated to audio. The output also reported OpenGL 4.2.
 
-Esta prueba confirma que el ejemplo y el backend simulado arrancan en esa laptop. No demuestra que la percepción del reto funcione ni que el vuelo físico esté preparado.
+This test confirms that the example and the simulated backend start on that laptop. It does not show that the challenge perception works nor that a physical flight is ready.
 
-## 5. Observación ROS que se realizó
+## 5. ROS observation that was made
 
-Durante la ejecución, `ros2 node list` mostró nodos como:
+During the run, `ros2 node list` showed nodes such as:
 
 ```text
 /crazyflie_server
@@ -102,7 +102,7 @@ Durante la ejecución, `ros2 node list` mostró nodos como:
 /teleop
 ```
 
-La lista de topics observada incluyó:
+The observed topic list included:
 
 ```text
 /cf231/cmd_full_state
@@ -115,21 +115,21 @@ La lista de topics observada incluyó:
 /tf_static
 ```
 
-Al consultar:
+Querying:
 
 ```bash
 ros2 topic info /tf
 ros2 topic info /cf231/cmd_full_state
 ```
 
-se obtuvo:
+returned:
 
 ```text
 /tf: Publisher count 1, Subscription count 1
 /cf231/cmd_full_state: Publisher count 0, Subscription count 1
 ```
 
-La consulta se hizo tras la secuencia de `hello_world`. Un topic puede existir aunque en ese instante nadie publique datos. La lista observada **no incluyó** `/cf231/pose` ni `/cf231/scan`; por ello no se ha validado todavía un flujo de percepción/localización para navegación. Para identificar qué nodos son los endpoints y revisar servicios, usar durante una ejecución activa:
+The query was made after the `hello_world` sequence. A topic can exist even if nobody publishes data at that moment. The observed list **did not include** `/cf231/pose` or `/cf231/scan`, so a perception/localization flow for navigation was not validated with this example. To identify which nodes are the endpoints and to check services, use during an active run:
 
 ```bash
 ros2 topic info /tf --verbose
@@ -137,138 +137,136 @@ ros2 topic list
 ros2 service list
 ```
 
-## 6. Modelo mental de los componentes
+## 6. Mental model of the components
 
 ```mermaid
 flowchart LR
-  A[hello_world / futuro nodo de misión] -->|servicios o comandos ROS 2| B[crazyflie_server]
+  A[hello_world / mission node] -->|ROS 2 services or commands| B[crazyflie_server]
   B --> C{backend}
-  C -->|sim| D[firmware en simulación SIL]
-  C -->|cflib/cpp| E[radio y Crazyflie físico]
-  E --> F[sensores y estimación del dron]
-  D --> G[datos/transforms ROS disponibles]
+  C -->|sim| D[firmware in SIL simulation]
+  C -->|cflib/cpp| E[radio and physical Crazyflie]
+  E --> F[drone sensors and estimation]
+  D --> G[ROS data/transforms available]
   F --> G
-  G --> H[RViz2: visualiza]
+  G --> H[RViz2: visualizes]
   G --> A
 ```
 
-ROS 2 proporciona la comunicación entre nodos. Crazyswarm2 define la interfaz y el servidor del Crazyflie. El backend `sim` es una alternativa al enlace físico. RViz consume datos para mostrarlos; no decide la ruta ni hace el control de vuelo.
+ROS 2 provides the communication between nodes. Crazyswarm2 defines the Crazyflie interface and server. The `sim` backend is an alternative to the physical link. RViz consumes data to display it; it neither decides the route nor controls the flight.
 
-## 7. Lo que todavía falta
+## 7. What is still missing
 
-### Para que cada colaborador pueda reproducir la base
+### So that every collaborator can reproduce the base
 
-- [ ] Documentar versiones exactas de WSL, Ubuntu, ROS 2, paquetes apt y firmware/bindings.
-- [ ] Preparar instrucciones limpias de instalación para otro usuario Linux; no depender del `PYTHONPATH` personal de `asus`.
-- [ ] Decidir si el repositorio se usará desde `/mnt/e/...` o si el código fuente ROS tendrá una copia/clon dentro del filesystem Linux (recomendable para builds frecuentes con `colcon`).
-- [ ] Verificar el README y este documento en GitHub después del primer commit/push.
+- [ ] Document the exact versions of WSL, Ubuntu, ROS 2, apt packages and firmware/bindings.
+- [ ] Prepare clean installation instructions for another Linux user; do not depend on the personal `PYTHONPATH` of `asus`.
+- [ ] Decide whether the repository is used from `/mnt/e/...` or whether the ROS source code gets a copy/clone inside the Linux filesystem (recommended for frequent `colcon` builds).
 
-### Para el reto y el hardware real
+### For the challenge and the real hardware
 
-- [ ] Confirmar con mentores qué deck lleva el dron asignado y qué topics/sensores están disponibles.
-- [ ] Confirmar si Lighthouse y estaciones base, Optical Flow, Multi-Ranger o cámara estarán disponibles y configurados.
-- [ ] Confirmar el ordenador y backend que se usarán (`cflib`/`cpp`) y el acceso al Crazyradio; WSL USB no ha sido probado.
-- [ ] Inspeccionar datos en hardware: unidades, frecuencia, frames, calidad de posición y comportamiento ante lecturas inválidas.
-- [ ] Implementar el nodo de misión: waypoints, máquina de estados, timeout y aterrizaje seguro.
-- [ ] Implementar y probar evitación de obstáculos acorde al sensor real.
-- [ ] Hacer pruebas físicas supervisadas, repetibles y en el área autorizada.
-- [ ] Registrar métricas y preparar demo/presentación con límites conocidos.
+- [ ] Confirm with the mentors which deck the assigned drone carries and which topics/sensors are available.
+- [ ] Confirm whether Lighthouse and base stations, Optical Flow, Multi-ranger or a camera will be available and configured.
+- [ ] Confirm the computer and backend to use (`cflib`/`cpp`) and access to the Crazyradio.
+- [ ] Inspect hardware data: units, rate, frames, position quality and behaviour on invalid readings.
+- [ ] Run supervised, repeatable physical tests in the authorized area.
+- [ ] Record metrics and prepare the demo/presentation with known limits.
 
-## 8. Siguiente sesión sugerida
+The mission node, obstacle avoidance and metrics now exist in the repository and pass in simulation; see the README.
 
-1. Revisar que el README principal y este archivo estén en GitHub.
-2. En una terminal Ubuntu activa, volver a lanzar la simulación y abrir otra terminal para listar nodos/topics/servicios.
-3. Crear una tabla de datos requeridos por el nodo de navegación: posición, distancias, comandos, unidades, frecuencia y frame.
-4. Llevar esa tabla a los mentores para confirmar qué proporciona el setup real antes de escoger algoritmo.
+## 8. Suggested next session
 
-## Referencias
+1. In an active Ubuntu terminal, launch the simulation again and open another terminal to list nodes/topics/services.
+2. Build a table of the data required by the navigation node: position, distances, commands, units, rate and frame.
+3. Take that table to the mentors to confirm what the real setup provides before tuning on hardware.
 
-- [Crazyswarm2 — instalación](https://imrclab.github.io/crazyswarm2/installation.html)
-- [Crazyswarm2 — uso y simulación](https://imrclab.github.io/crazyswarm2/usage.html)
-- [Crazyswarm2 — overview de paquetes y backends](https://imrclab.github.io/crazyswarm2/overview.html)
-- [Reto y equipamiento de la hackaton](https://mobile-robotics.eu/)
+## References
+
+- [Crazyswarm2 — installation](https://imrclab.github.io/crazyswarm2/installation.html)
+- [Crazyswarm2 — usage and simulation](https://imrclab.github.io/crazyswarm2/usage.html)
+- [Crazyswarm2 — overview of packages and backends](https://imrclab.github.io/crazyswarm2/overview.html)
+- [Hackathon challenge and equipment](https://mobile-robotics.eu/)
 
 ---
 
-## Guía detallada desde cero
+## Detailed guide from scratch
 
-Esta guía describe cómo preparar un ordenador Windows con WSL 2, Ubuntu 22.04, ROS 2 Humble, Crazyswarm2, simulación y RViz2. Está pensada para alguien que nunca ha instalado ROS. Las secciones anteriores conservan el estado y los resultados observados en la laptop original.
+This guide describes how to prepare a Windows computer with WSL 2, Ubuntu 22.04, ROS 2 Humble, Crazyswarm2, simulation and RViz2. It is meant for someone who has never installed ROS. The previous sections keep the status and the results observed on the original laptop.
 
-### Antes de empezar: qué terminal usar
+### Before starting: which terminal to use
 
-Hay dos terminales distintas. No mezclar sus comandos:
+There are two different terminals. Do not mix their commands:
 
-- **PowerShell de Windows:** comandos como wsl y New-Item. Abrir desde Inicio buscando PowerShell. Para instalar WSL por primera vez, abrirlo como administrador.
-- **Ubuntu (WSL):** terminal Linux; los comandos usan sudo, apt, cd, source, make y ros2. La contraseña Linux no muestra caracteres mientras se escribe: es normal.
+- **Windows PowerShell:** commands such as wsl and New-Item. Open it from Start by searching for PowerShell. To install WSL for the first time, open it as administrator.
+- **Ubuntu (WSL):** Linux terminal; the commands use sudo, apt, cd, source, make and ros2. The Linux password shows no characters while typing: this is normal.
 
-El usuario Linux debe empezar con minúscula. En la laptop original, ASUS fue rechazado; asus sí funcionó. El usuario y contraseña de Ubuntu son locales a esa distribución y no tienen que coincidir con Windows.
+The Linux user name must start with a lowercase letter. On the original laptop, ASUS was rejected; asus worked. The Ubuntu user and password are local to that distribution and do not have to match Windows.
 
-### 1. Instalar o comprobar WSL 2 y Ubuntu 22.04
+### 1. Install or check WSL 2 and Ubuntu 22.04
 
-En PowerShell como administrador:
+In PowerShell as administrator:
 
     wsl --install
     wsl --update
     wsl --set-default-version 2
     wsl --install -d Ubuntu-22.04
 
-Si Windows pide reiniciar, hacerlo. Abrir Ubuntu desde el menú Inicio y crear el usuario Linux.
+If Windows asks for a restart, restart. Open Ubuntu from the Start menu and create the Linux user.
 
-Comprobar desde PowerShell:
+Check from PowerShell:
 
     wsl --status
     wsl --version
     wsl --list --verbose
 
-En la lista, Ubuntu-22.04 debe mostrar VERSION 2. Si aparece VERSION 1:
+In the list, Ubuntu-22.04 must show VERSION 2. If it shows VERSION 1:
 
     wsl --set-version Ubuntu-22.04 2
 
-Después comprobar desde Ubuntu:
+Then check from Ubuntu:
 
     whoami
     lsb_release -a
     uname -m
 
-Se espera Ubuntu 22.04 (Jammy) y arquitectura x86_64/amd64 en una laptop Intel/AMD habitual.
+Ubuntu 22.04 (Jammy) and an x86_64/amd64 architecture are expected on a typical Intel/AMD laptop.
 
-Referencias Microsoft: [instalar WSL](https://learn.microsoft.com/windows/wsl/install) · [comandos WSL](https://learn.microsoft.com/windows/wsl/basic-commands)
+Microsoft references: [install WSL](https://learn.microsoft.com/windows/wsl/install) · [WSL commands](https://learn.microsoft.com/windows/wsl/basic-commands)
 
-### 2. Opcional: mover Ubuntu a otro disco antes de instalar ROS
+### 2. Optional: move Ubuntu to another disk before installing ROS
 
-Ubuntu vive dentro de un disco virtual que normalmente ocupa espacio en C:. Si C: tiene poco espacio y se dispone de otro disco (en nuestro caso E:), conviene mover la distribución antes de instalar paquetes grandes.
+Ubuntu lives inside a virtual disk that normally takes space on C:. If C: is short of space and another disk is available (E: in our case), move the distribution before installing large packages.
 
-En PowerShell, crear el directorio padre:
+In PowerShell, create the parent directory:
 
     New-Item -ItemType Directory -Path E:\WSL -Force
 
-Cerrar todas las ventanas de Ubuntu y aplicaciones que puedan mantener WSL ocupado (por ejemplo, VS Code conectado a WSL o Docker Desktop). Luego:
+Close every Ubuntu window and application that may keep WSL busy (for example VS Code connected to WSL or Docker Desktop). Then:
 
     wsl --shutdown
     wsl --list --verbose
     wsl --manage Ubuntu-22.04 --move E:\WSL\Ubuntu-22.04
 
-La opción --manage ... --move requiere una versión reciente de WSL. Si PowerShell indica que --manage no existe, ejecutar wsl --update, cerrar y volver a abrir PowerShell, y consultar wsl --help.
+The --manage ... --move option requires a recent WSL version. If PowerShell reports that --manage does not exist, run wsl --update, close and reopen PowerShell, and check wsl --help.
 
-**Error que encontramos:** ERROR_SHARING_VIOLATION / “el archivo está siendo utilizado por otro proceso”. No significa que Ubuntu se haya perdido; indica que una instancia aún utiliza su disco. Cerrar Ubuntu y aplicaciones WSL, ejecutar wsl --shutdown, comprobar con wsl --list --verbose que la distro esté detenida y reintentar. Si persiste, reiniciar Windows antes de reintentar. No ejecutar wsl --unregister: es destructivo y elimina la distribución.
+**Error we hit:** ERROR_SHARING_VIOLATION / "the file is being used by another process". It does not mean that Ubuntu was lost; an instance is still using its disk. Close Ubuntu and WSL applications, run wsl --shutdown, check with wsl --list --verbose that the distro is stopped and retry. If it persists, restart Windows before retrying. Do not run wsl --unregister: it is destructive and deletes the distribution.
 
-Después del movimiento, abrir Ubuntu y confirmar que inicia. El paso es opcional si hay espacio suficiente en C:.
+After the move, open Ubuntu and confirm that it starts. The step is optional if there is enough space on C:.
 
-### 3. Actualizar Ubuntu e instalar utilidades base
+### 3. Update Ubuntu and install the base tools
 
-En Ubuntu:
+In Ubuntu:
 
     sudo apt update
     sudo apt upgrade -y
     sudo apt install -y curl gnupg lsb-release software-properties-common build-essential git python3-pip python3-venv python3-dev swig python3-colcon-common-extensions python3-rosdep python3-vcstool python3-argcomplete
 
-Si apt upgrade pregunta si desea continuar, responder Y y Enter. apt update actualiza el índice de paquetes; apt upgrade actualiza los paquetes ya instalados.
+If apt upgrade asks whether to continue, answer Y and Enter. apt update refreshes the package index; apt upgrade updates the packages already installed.
 
-Comprobar que el locale use UTF-8:
+Check that the locale uses UTF-8:
 
     locale
 
-Si aparece una advertencia por locale ausente o no UTF-8:
+If a warning about a missing or non-UTF-8 locale appears:
 
     sudo apt install -y locales
     sudo locale-gen en_US en_US.UTF-8
@@ -276,9 +274,9 @@ Si aparece una advertencia por locale ausente o no UTF-8:
     export LANG=en_US.UTF-8
     locale
 
-### 4. Instalar ROS 2 Humble Desktop
+### 4. Install ROS 2 Humble Desktop
 
-Humble está emparejado con Ubuntu 22.04. La opción Desktop incluye herramientas gráficas como RViz2. Ejecutar en Ubuntu:
+Humble is paired with Ubuntu 22.04. The Desktop option includes graphical tools such as RViz2. Run in Ubuntu:
 
     sudo add-apt-repository universe
     sudo apt update
@@ -286,160 +284,160 @@ Humble está emparejado con Ubuntu 22.04. La opción Desktop incluye herramienta
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
     sudo apt update
 
-Antes de instalar, se puede comprobar que apt encuentra el paquete:
+Before installing, check that apt finds the package:
 
     apt-cache policy ros-humble-desktop
 
-Debe mostrar un Candidate distinto de (none). Instalar:
+It must show a Candidate other than (none). Install:
 
     sudo apt install -y ros-humble-desktop
     sudo apt install -y python3-colcon-common-extensions python3-rosdep python3-vcstool
 
-Activar ROS en la terminal actual:
+Activate ROS in the current terminal:
 
     source /opt/ros/humble/setup.bash
     echo $ROS_DISTRO
     ros2 --help
 
-Se espera humble y la ayuda de ros2.
+humble and the ros2 help are expected.
 
-Para que ROS se cargue automáticamente en terminales nuevas, añadir la línea una sola vez:
+To load ROS automatically in new terminals, add the line once:
 
     grep -qxF 'source /opt/ros/humble/setup.bash' ~/.bashrc || echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
     source ~/.bashrc
 
-Inicializar rosdep, la herramienta que instala dependencias declaradas por paquetes ROS. Si ya estaba inicializado, no repetir:
+Initialize rosdep, the tool that installs the dependencies declared by ROS packages. If it was already initialized, do not repeat it:
 
     if [ ! -e /etc/ros/rosdep/sources.list.d/20-default.list ]; then sudo rosdep init; fi
     rosdep update
 
-**Problema posible:** Unable to locate package ros-humble-desktop. Revisar que lsb_release -cs devuelva jammy, que exista /etc/apt/sources.list.d/ros2.list y apunte a packages.ros.org/ros2/ubuntu, y que sudo apt update no haya terminado con error. Luego repetir apt-cache policy ros-humble-desktop.
+**Possible problem:** Unable to locate package ros-humble-desktop. Check that lsb_release -cs returns jammy, that /etc/apt/sources.list.d/ros2.list exists and points to packages.ros.org/ros2/ubuntu, and that sudo apt update did not end with an error. Then repeat apt-cache policy ros-humble-desktop.
 
-Referencia: [instalación binaria ROS 2 Humble](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html)
+Reference: [ROS 2 Humble binary installation](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html)
 
-### 5. Verificar ROS 2 entre dos terminales
+### 5. Check ROS 2 between two terminals
 
-Abrir dos terminales Ubuntu. En ambas:
+Open two Ubuntu terminals. In both:
 
     source /opt/ros/humble/setup.bash
 
-En la primera:
+In the first one:
 
     ros2 run demo_nodes_cpp talker
 
-Dejarla abierta. En la segunda:
+Leave it open. In the second one:
 
     ros2 run demo_nodes_py listener
 
-El listener debe imprimir mensajes recibidos del talker. Detener cada proceso con Ctrl+C. Esto prueba ROS 2 básico, no Crazyswarm2. Si ros2 no se encuentra, ejecutar source /opt/ros/humble/setup.bash en esa terminal.
+The listener must print messages received from the talker. Stop each process with Ctrl+C. This tests basic ROS 2, not Crazyswarm2. If ros2 is not found, run source /opt/ros/humble/setup.bash in that terminal.
 
-### 6. Instalar Crazyswarm2 y rowan
+### 6. Install Crazyswarm2 and rowan
 
-En Ubuntu:
+In Ubuntu:
 
     sudo apt update
     apt-cache policy ros-humble-crazyflie
     sudo apt install -y 'ros-humble-crazyflie*'
 
-Después comprobar:
+Then check:
 
     source /opt/ros/humble/setup.bash
     ros2 pkg list | grep '^crazyflie'
 
-Deben aparecer paquetes como crazyflie, crazyflie_examples, crazyflie_interfaces y crazyflie_sim.
+Packages such as crazyflie, crazyflie_examples, crazyflie_interfaces and crazyflie_sim must appear.
 
-Comprobar el módulo Python rowan:
+Check the rowan Python module:
 
-    python3 -c "import rowan; print('rowan listo')"
+    python3 -c "import rowan; print('rowan ready')"
 
-Si aparece ModuleNotFoundError: No module named 'rowan':
+If ModuleNotFoundError: No module named 'rowan' appears:
 
     sudo apt update
     sudo apt install -y python3-pip
     python3 -m pip install --user rowan
-    python3 -c "import rowan; print('rowan listo')"
+    python3 -c "import rowan; print('rowan ready')"
 
-**Problema que encontramos:** el comando pip no existía. En Ubuntu puede faltar el ejecutable pip; python3 -m pip selecciona explícitamente la versión de Python. Si falta pip, instalar python3-pip con apt. No usar sudo pip.
+**Problem we hit:** the pip command did not exist. Ubuntu may lack the pip executable; python3 -m pip explicitly selects the Python version. If pip is missing, install python3-pip with apt. Do not use sudo pip.
 
-### 7. Preparar cffirmware para el backend simulado (SIL)
+### 7. Prepare cffirmware for the simulated backend (SIL)
 
-Este paso solo se necesita si el backend sim termina con ModuleNotFoundError: No module named 'cffirmware'. El simulador utiliza bindings Python de partes del firmware Crazyflie.
+This step is only needed if the sim backend ends with ModuleNotFoundError: No module named 'cffirmware'. The simulator uses Python bindings of parts of the Crazyflie firmware.
 
-Instalar las herramientas:
+Install the tools:
 
     sudo apt update
     sudo apt install -y git make gcc-arm-none-eabi build-essential python3-dev python3-setuptools python3-numpy swig
 
-Clonar firmware. Si ya existe ~/crazyflie-firmware, no volver a clonarlo: entrar a esa carpeta y revisar la rama.
+Clone the firmware. If ~/crazyflie-firmware already exists, do not clone it again: enter that folder and check the branch.
 
     cd ~
     git clone --branch 2025.02 --single-branch --recursive https://github.com/bitcraze/crazyflie-firmware.git
     cd ~/crazyflie-firmware
     git status --short --branch
 
-Si ya estaba clonado pero faltaban submódulos:
+If it was already cloned but the submodules were missing:
 
     cd ~/crazyflie-firmware
     git submodule update --init --recursive
 
-Configurar, generar headers y compilar:
+Configure, generate the headers and build:
 
     make cf2_defconfig
     make -j2
     make bindings_python
 
-make -j2 construye firmware y puede tomar tiempo. **No lo flashea al dron.** No ejecutar make flash, make cload ni otro target de flasheo para preparar la simulación. La guía de Bitcraze documenta make cf2_defconfig y make bindings_python; en la laptop original fue necesario completar la generación de headers antes de volver a compilar bindings.
+make -j2 builds the firmware and may take a while. **It does not flash the drone.** Do not run make flash, make cload or any other flashing target to prepare the simulation. The Bitcraze guide documents make cf2_defconfig and make bindings_python; on the original laptop the header generation had to be completed before building the bindings again.
 
-Si make bindings_python termina correctamente, instalar los bindings para el usuario:
+If make bindings_python ends correctly, install the bindings for the user:
 
     cd ~/crazyflie-firmware/build
     python3 setup.py install --user
 
-Probar el import desde la carpeta de construcción:
+Test the import from the build folder:
 
-    PYTHONPATH="$HOME/crazyflie-firmware/build:$PYTHONPATH" python3 -c "import cffirmware; print('cffirmware listo')"
+    PYTHONPATH="$HOME/crazyflie-firmware/build:$PYTHONPATH" python3 -c "import cffirmware; print('cffirmware ready')"
 
-Para conservar PYTHONPATH en nuevas terminales, añadirlo una sola vez:
+To keep PYTHONPATH in new terminals, add it once:
 
     grep -qxF 'export PYTHONPATH="$HOME/crazyflie-firmware/build:$PYTHONPATH"' ~/.bashrc || echo 'export PYTHONPATH="$HOME/crazyflie-firmware/build:$PYTHONPATH"' >> ~/.bashrc
     source ~/.bashrc
-    python3 -c "import cffirmware; print('cffirmware listo')"
+    python3 -c "import cffirmware; print('cffirmware ready')"
 
-**Error que encontramos: autoconf.h: No such file or directory.** make cf2_defconfig creó .config, pero en esa ejecución aún no existía build/include/generated/autoconf.h. Completar el proceso que genera los headers antes de repetir los bindings:
+**Error we hit: autoconf.h: No such file or directory.** make cf2_defconfig created .config, but in that run build/include/generated/autoconf.h did not exist yet. Complete the process that generates the headers before repeating the bindings:
 
     cd ~/crazyflie-firmware
     make -j2
     ls build/include/generated/autoconf.h
     make bindings_python
 
-Si ls aún dice que no existe, revisar el primer error de make -j2, las herramientas instaladas y que se esté en la raíz de ~/crazyflie-firmware. No crear autoconf.h manualmente.
+If ls still says that it does not exist, check the first error of make -j2, the installed tools and that you are at the root of ~/crazyflie-firmware. Do not create autoconf.h manually.
 
-**Error posterior: No module named '_cffirmware'.** Puede existir cffirmware.py sin la extensión nativa _cffirmware. Comprobar que make bindings_python terminó sin error, revisar los archivos de build y probar otra vez con PYTHONPATH. No basta con que make cf2_defconfig haya creado .config.
+**Later error: No module named '_cffirmware'.** cffirmware.py may exist without the native extension _cffirmware. Check that make bindings_python ended without error, check the build files and try again with PYTHONPATH. It is not enough that make cf2_defconfig created .config.
 
-Referencias: [instalación Crazyswarm2 y SIL](https://imrclab.github.io/crazyswarm2/installation.html) · [compilación del firmware y bindings](https://github.com/bitcraze/crazyflie-firmware/blob/master/docs/building-and-flashing/build.md)
+References: [Crazyswarm2 installation and SIL](https://imrclab.github.io/crazyswarm2/installation.html) · [firmware and bindings build](https://github.com/bitcraze/crazyflie-firmware/blob/master/docs/building-and-flashing/build.md)
 
-### 8. Lanzar la simulación y RViz2
+### 8. Launch the simulation and RViz2
 
-En Ubuntu:
+In Ubuntu:
 
     ros2 launch crazyflie_examples launch.py script:=hello_world backend:=sim rviz:=True
 
-En la laptop original, el servidor registró despegue y aterrizaje de cf231, hello_world terminó limpiamente y RViz2 abrió. Mantener la terminal abierta mientras se observa la simulación.
+On the original laptop, the server logged the takeoff and landing of cf231, hello_world finished cleanly and RViz2 opened. Keep the terminal open while watching the simulation.
 
-rviz:=True es importante: en la instalación probada, RViz no se lanzó cuando se omitió ese argumento. La advertencia Stereo is NOT SUPPORTED no impidió la visualización ni está relacionada con el audio; la salida también mostró OpenGL 4.2.
+rviz:=True matters: in the tested installation, RViz was not launched when that argument was omitted. The Stereo is NOT SUPPORTED warning did not prevent the visualization and is unrelated to audio; the output also reported OpenGL 4.2.
 
-Si RViz no abre:
+If RViz does not open:
 
-1. Desde PowerShell: wsl --update
-2. Cerrar Ubuntu y ejecutar en PowerShell: wsl --shutdown
-3. Abrir Ubuntu de nuevo y probar: rviz2
-4. Comprobar wsl --list --verbose (debe decir versión 2) y en Ubuntu: echo $DISPLAY y echo $WAYLAND_DISPLAY
+1. From PowerShell: wsl --update
+2. Close Ubuntu and run in PowerShell: wsl --shutdown
+3. Open Ubuntu again and try: rviz2
+4. Check wsl --list --verbose (it must say version 2) and in Ubuntu: echo $DISPLAY and echo $WAYLAND_DISPLAY
 
-La compatibilidad gráfica depende de Windows/WSL y de los drivers. Referencia: [Microsoft: GUI Linux en WSL](https://learn.microsoft.com/windows/wsl/tutorials/gui-apps).
+Graphics compatibility depends on Windows/WSL and the drivers. Reference: [Microsoft: Linux GUI apps on WSL](https://learn.microsoft.com/windows/wsl/tutorials/gui-apps).
 
-### 9. Inspeccionar ROS con el lanzamiento activo
+### 9. Inspect ROS with the launch running
 
-No cerrar la terminal de launch. Abrir otra terminal Ubuntu:
+Do not close the launch terminal. Open another Ubuntu terminal:
 
     source /opt/ros/humble/setup.bash
     ros2 node list
@@ -447,30 +445,29 @@ No cerrar la terminal de launch. Abrir otra terminal Ubuntu:
     ros2 topic info /tf --verbose
     ros2 service list
 
-Un topic puede aparecer aunque no publique mensajes en ese instante. En nuestra inspección, /cf231/cmd_full_state tenía un suscriptor y cero publicadores tras finalizar hello_world; no vimos /cf231/pose ni /scan en aquella prueba.
+A topic can appear even if it publishes no messages at that moment. In our inspection, /cf231/cmd_full_state had one subscriber and zero publishers after hello_world ended; we did not see /cf231/pose or /scan in that test.
 
-**Límite:** esta prueba verifica lanzamiento, órdenes de alto nivel y visualización disponible; no prueba percepción, mapa, localización autónoma ni evitación de obstáculos. La disponibilidad depende del backend y la configuración; confirmar con los mentores qué topics ofrece el hardware del evento.
+**Limit:** this test verifies the launch, high-level commands and the available visualization; it does not test perception, mapping, autonomous localization or obstacle avoidance. Availability depends on the backend and the configuration; confirm with the mentors which topics the event hardware provides.
 
-### 10. Qué no cubre esta instalación
+### 10. What this installation does not cover
 
-- No se ha probado el acceso USB del Crazyradio desde WSL. La documentación de Crazyswarm2 califica WSL como experimental y menciona usbipd-win para enlazar dispositivos USB.
-- No se ha probado Crazyflie físico, enlace de radio ni vuelo real.
-- No se confirmó qué decks, cámara o topics estarán disponibles para el reto.
-- Aún no está desarrollado el nodo de navegación del equipo.
-- No presentar el resultado de RViz como validación completa de percepción o planificación.
+- Crazyradio USB access from WSL is not covered here. The Crazyswarm2 documentation rates WSL as experimental and mentions usbipd-win to attach USB devices (drone 2 used it, see [docs/cf2_flow_multiranger.md](docs/cf2_flow_multiranger.md)).
+- No physical Crazyflie, radio link or real flight is tested by this guide.
+- It does not confirm which decks, camera or topics will be available for the challenge.
+- Do not present the RViz result of this example as a full validation of perception or planning.
 
-Confirmar si se usará un NUC/Jetson del evento en lugar de la laptop/WSL. Referencia: [notas WSL de Crazyswarm2](https://imrclab.github.io/crazyswarm2/installation.html).
+Confirm whether an event NUC/Jetson will be used instead of the laptop/WSL. Reference: [Crazyswarm2 WSL notes](https://imrclab.github.io/crazyswarm2/installation.html).
 
-### 11. Checklist por colaborador
+### 11. Checklist per collaborator
 
-- [ ] wsl --list --verbose muestra Ubuntu-22.04 como versión 2.
-- [ ] Ubuntu muestra Jammy/22.04 y el usuario Linux es válido.
-- [ ] echo $ROS_DISTRO muestra humble.
-- [ ] talker/listener se comunican en dos terminales.
-- [ ] ros2 pkg list | grep '^crazyflie' encuentra los paquetes.
-- [ ] python3 -c "import rowan" termina sin error.
-- [ ] Si se utilizará backend sim: python3 -c "import cffirmware" termina sin error.
-- [ ] El launch hello_world con backend sim y rviz:=True abre RViz y registra takeoff/land.
-- [ ] Todos entienden que USB/radio y sensores reales siguen pendientes.
+- [ ] wsl --list --verbose shows Ubuntu-22.04 as version 2.
+- [ ] Ubuntu shows Jammy/22.04 and the Linux user is valid.
+- [ ] echo $ROS_DISTRO shows humble.
+- [ ] talker/listener communicate in two terminals.
+- [ ] ros2 pkg list | grep '^crazyflie' finds the packages.
+- [ ] python3 -c "import rowan" ends without error.
+- [ ] If the sim backend will be used: python3 -c "import cffirmware" ends without error.
+- [ ] The hello_world launch with the sim backend and rviz:=True opens RViz and logs takeoff/land.
+- [ ] Everybody understands that USB/radio and real sensors must be checked on the event hardware.
 
-Al subir esta guía, no incluir el VHDX de Ubuntu, llaves SSH, tokens ni datos privados. El VHDX contiene toda la instalación y es demasiado grande para Git; cada integrante prepara su propio WSL.
+When uploading this guide, do not include the Ubuntu VHDX, SSH keys, tokens or private data. The VHDX contains the whole installation and is far too large for Git; every member prepares their own WSL.

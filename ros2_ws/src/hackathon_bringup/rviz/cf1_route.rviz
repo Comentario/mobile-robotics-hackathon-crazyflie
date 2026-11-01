@@ -1,0 +1,90 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Global Options:
+    Background Color: 245; 245; 245
+    Fixed Frame: map
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid 0.5 m
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 10
+      Color: 190; 190; 190
+    - Class: rviz_default_plugins/Map
+      Name: CF2 map
+      Enabled: true
+      Alpha: 0.8
+      Topic:
+        Value: /hk/shared_map/raw
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Map
+      Name: CF2 map with CF1 clearance
+      Enabled: false
+      Alpha: 0.3
+      Topic:
+        Value: /hk/shared_map/inflated
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Planned route - BLUE
+      Enabled: true
+      Color: 30; 80; 220
+      Alpha: 0.6
+      Line Style: Lines
+      Line Width: 0.02
+      Topic:
+        Value: /hk/path/modified
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Current leg - ORANGE
+      Enabled: true
+      Color: 240; 140; 20
+      Alpha: 1
+      Line Style: Billboards
+      Line Width: 0.03
+      Topic:
+        Value: /hk/path/processed
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Flown trajectory - RED
+      Enabled: true
+      Color: 210; 40; 40
+      Alpha: 1
+      Line Style: Billboards
+      Line Width: 0.02
+      Topic:
+        Value: /hk/trajectory
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/TF
+      Name: CF1 (base_link)
+      Enabled: true
+      Marker Scale: 0.4
+      Show Names: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top view
+      Angle: 0
+      Scale: 150
+      X: 0.0
+      Y: 0.1
+Window Geometry:
+  Width: 1100
+  Height: 700

@@ -1,5 +1,5 @@
-# Pared en mitad de la ruta (T03).
-# Formato: simulation_adapter/world.py
+# Wall in the middle of the route (T03).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:

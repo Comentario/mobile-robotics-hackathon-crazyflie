@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crazyflie 2 · Live map</title>
+<style>
+body{font:16px system-ui;background:#101924;color:#e5edf6;margin:24px;max-width:1100px}
+h1{font-size:24px}canvas{width:min(100%,800px);background:#a7adb5;border:1px solid #607086}
+#status{padding:12px;background:#203047;margin-bottom:12px}label{display:block;margin:12px 0}
+.legend{color:#b9c8db}table{border-collapse:collapse;margin:14px 0}td,th{padding:6px 18px;text-align:left;border-bottom:1px solid #34465b}
+</style>
+<h1>Crazyflie 2 · Live 2D map</h1>
+<div id="status">Waiting for telemetry…</div>
+<label>Zoom <input id="zoom" type="range" min="1" max="6" step="0.5" value="3"></label>
+<canvas id="map" width="800" height="800"></canvas>
+<p class="legend">Gray: unknown · white: observed free space · black: obstacle · blue: flight path · red: drone · green: current ranges.</p>
+<p>+X points right, +Y points up. Cell size: 5 cm. Local map with drift and temporary observations. Automatic obstacle avoidance is not enabled.</p>
+<table><tr><th>Sensor</th><th>Distance</th></tr><tbody id="ranges"></tbody></table>
+<p id="details"></p>
+<p id="navigation">Navigation: waiting for session data</p>
+<p><a href="/export" style="color:#b8d9ff">Download local map</a> · Shared frame alignment: pending</p>
+<script>
+const canvas=document.getElementById('map'),ctx=canvas.getContext('2d');
+const off=document.createElement('canvas'),oc=off.getContext('2d');
+const directions={front:0,left:Math.PI/2,back:Math.PI,right:-Math.PI/2};
+const names={front:'Front',left:'Left',back:'Back',right:'Right'};
+let latest=null;
+function draw(s){
+ ctx.clearRect(0,0,800,800);if(!s.origin)return;
+ off.width=s.width;off.height=s.height;const im=oc.createImageData(s.width,s.height);
+ for(let y=0;y<s.height;y++)for(let x=0;x<s.width;x++){
+  const v=s.data[y*s.width+x],c=v<0?167:v===100?12:250,i=((s.height-1-y)*s.width+x)*4;
+  im.data[i]=im.data[i+1]=im.data[i+2]=c;im.data[i+3]=255;
+ }
+ oc.putImageData(im,0,0);const scale=800/s.width*Number(document.getElementById('zoom').value);
+ ctx.imageSmoothingEnabled=false;ctx.drawImage(off,400-s.width*scale/2,400-s.height*scale/2,s.width*scale,s.height*scale);
+ const xy=(x,y)=>[400+((x-s.origin[0])/s.resolution-s.width/2)*scale,400-((y-s.origin[1])/s.resolution-s.height/2)*scale];
+ if(s.start){const p=xy(...s.start);ctx.strokeStyle='#f9bb32';ctx.lineWidth=3;ctx.strokeRect(p[0]-6,p[1]-6,12,12);ctx.fillStyle='#765400';ctx.font='14px system-ui';ctx.fillText('Start (0, 0)',p[0]+10,p[1]-10)}
+ if(s.navigation?.path?.length){ctx.strokeStyle='#a64fe0';ctx.lineWidth=2;ctx.setLineDash([5,5]);ctx.beginPath();s.navigation.path.forEach(([x,y],i)=>{const p=xy(x,y);i?ctx.lineTo(...p):ctx.moveTo(...p)});ctx.stroke();ctx.setLineDash([])}
+ ctx.strokeStyle='#1379e7';ctx.lineWidth=2;ctx.beginPath();
+ s.trail.forEach(([x,y],i)=>{const p=xy(x,y);i?ctx.lineTo(...p):ctx.moveTo(...p)});ctx.stroke();
+ if(s.pose){const x=s.pose['stateEstimate.x'],y=s.pose['stateEstimate.y'],a=s.pose['stateEstimate.yaw']*Math.PI/180,p=xy(x,y);
+  ctx.strokeStyle='#269e59';ctx.lineWidth=1.5;
+  for(const [name,offset] of Object.entries(directions)){const mm=s.ranges_mm['range.'+name];if(mm>=50&&mm<=4000){const q=xy(x+mm/1000*Math.cos(a+offset),y+mm/1000*Math.sin(a+offset));ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...q);ctx.stroke()}}
+  ctx.fillStyle='#dc3545';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();const q=xy(x+.15*Math.cos(a),y+.15*Math.sin(a));ctx.strokeStyle='#dc3545';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...q);ctx.stroke();
+ }
+ ctx.fillStyle='#d73030';ctx.font='16px system-ui';ctx.fillText(`View: ${(800/scale*s.resolution).toFixed(1)} × ${(800/scale*s.resolution).toFixed(1)} m`,12,25);
+}
+async function update(){try{
+ const response=await fetch('/state');if(!response.ok)throw new Error('HTTP '+response.status);const s=await response.json();latest=s;draw(s);
+ const stale=s.age_seconds===null||s.age_seconds>1;
+ document.getElementById('status').textContent=stale?'No recent telemetry · the displayed map may be outdated':s.origin?'Receiving telemetry · updating map':'Receiving telemetry · waiting for flight at 20–40 cm';
+ document.getElementById('ranges').replaceChildren();for(const [key,name] of Object.entries(names)){const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td'),mm=s.ranges_mm['range.'+key];a.textContent=name;b.textContent=mm>=50&&mm<=4000?(mm/1000).toFixed(3)+' m':'No usable return';tr.append(a,b);document.getElementById('ranges').append(tr)}
+ document.getElementById('details').textContent=`Estimated height: ${s.pose?s.pose['stateEstimate.z'].toFixed(3)+' m':'—'} · Integrated returns: ${s.stats.hits} · Observation lifetime: ${s.decay_seconds} s · Frame: ${s.frame}`;
+ const relative=s.pose&&s.start?`X: ${(s.pose['stateEstimate.x']-s.start[0]).toFixed(2)} m · Y: ${(s.pose['stateEstimate.y']-s.start[1]).toFixed(2)} m`:'Start position pending';
+ document.getElementById('navigation').textContent=s.navigation?`${relative} · Navigation: ${s.navigation.state} · ${s.navigation.reason||'tracking'} · Waypoint: ${s.navigation.waypoint_index} · Replans: ${s.navigation.replans} · Purple: planned path`:`${relative} · Open-loop recording: avoidance is not enabled`;
+}catch(error){document.getElementById('status').textContent='Could not receive map: '+error.message}finally{setTimeout(update,200)}}
+document.getElementById('zoom').oninput=()=>latest&&draw(latest);update();
+</script></html>

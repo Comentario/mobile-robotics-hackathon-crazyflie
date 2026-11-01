@@ -1,5 +1,5 @@
-# Overlay: se aplica encima de simulation.yaml o event.yaml (argumento overlay:=conservative.yaml).
-# Primeros vuelos reales y ensayos: más lento y con más margen.
+# Overlay: applied on top of simulation.yaml or event.yaml (argument overlay:=conservative.yaml).
+# First real flights and rehearsals: slower and with more margin.
 /**:
   ros__parameters:
     warning_distance: 0.8

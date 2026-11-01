@@ -1,7 +1,7 @@
-# Frames de sensores respecto a base_link (TP-13). Unidades: m y rad. Ejes REP-103:
-# x adelante, y izquierda, z arriba. El eje x de cada frame de sensor apunta en la
-# dirección del rayo (convención de sensor_msgs/Range).
-# TODO(TP-13): medir los offsets reales sobre el Crazyflie con el Multi-ranger montado.
+# Sensor frames relative to base_link (TP-13). Units: m and rad. REP-103 axes:
+# x forward, y left, z up. The x axis of every sensor frame points along the ray
+# (sensor_msgs/Range convention).
+# TODO(TP-13): measure the real offsets on the Crazyflie with the Multi-ranger mounted.
 base_frame: base_link
 sensors:
   front_range: {xyz: [0.02, 0.0, 0.03], rpy: [0.0, 0.0, 0.0]}

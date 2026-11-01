@@ -1,0 +1,9 @@
+# Waypoints of the synthetic cooperative CF2 -> CF1 route example (C01).
+# They match data/examples/cooperative_polygon/requested_waypoints.yaml.
+frame_id: map
+waypoints:
+  - [1.43, -0.6, 0.8]
+  - [1.57, 0.8, 0.8]
+  - [-1.3, 0.63, 0.8]
+  - [-1.5, 0.0, 0.8]
+  - [0.03, -0.09, 0.8]

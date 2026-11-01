@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Planificador global: ruta directa (P0) o A* sobre el mapa local (P1), con replanning.',
+    description='Global planner: direct route (P0) or A* over the local map (P1), with replanning.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

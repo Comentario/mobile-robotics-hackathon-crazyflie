@@ -1,0 +1,106 @@
+import unittest
+from cf2_live_map import LiveMap
+
+
+def pose(stamp=100, yaw=0, airborne=True, session='one'):
+    return {'log': 'cf2_pose', 'timestamp_ms': stamp, 'hovering': airborne,
+            'session_id': session, 'data': {'stateEstimate.x': 0,
+            'stateEstimate.y': 0, 'stateEstimate.z': 0.3, 'stateEstimate.yaw': yaw}}
+
+
+def ranges(stamp=102, front=1000, session='one'):
+    return {'log': 'cf2_ranges', 'timestamp_ms': stamp, 'hovering': True,
+            'session_id': session, 'data': {'range.front': front,
+            'range.back': 32766, 'range.left': 32766, 'range.right': 32766}}
+
+
+class LiveMappingTests(unittest.TestCase):
+    def test_incremental_ray_and_invalid_returns(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        s = m.snapshot(now=1)
+        self.assertEqual(s['data'][m.cell(1, 0)], 100)
+        self.assertEqual(s['data'][m.cell(0.5, 0)], 0)
+        self.assertEqual(s['data'][m.cell(0, 0.5)], -1)
+        self.assertEqual(s['stats']['hits'], 1)
+        self.assertEqual(s['stats']['invalid_ranges'], 3)
+
+    def test_yaw_and_stale_pose(self):
+        m = LiveMap()
+        m.update(pose(yaw=90), now=1)
+        m.update(ranges(), now=1)
+        self.assertEqual(m.snapshot(now=1)['data'][m.cell(0, 1)], 100)
+        m.update(ranges(stamp=200), now=1)
+        self.assertEqual(m.snapshot(now=1)['stats']['unpaired'], 1)
+
+    def test_ground_and_new_flight_are_not_fused(self):
+        m = LiveMap()
+        m.update(pose(airborne=False), now=1)
+        m.update(ranges(), now=1)
+        self.assertIsNone(m.snapshot(now=1)['origin'])
+        m.update(pose(), now=2)
+        m.update(ranges(), now=2)
+        m.update(pose(session='two'), now=3)
+        self.assertEqual(m.snapshot(now=3)['stats']['hits'], 0)
+        self.assertTrue(all(v == -1 for v in m.snapshot(now=3)['data']))
+
+    def test_navigation_status_cannot_hide_stale_pose(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        self.assertEqual(m.snapshot(now=1)['start'], (0, 0))
+        m.update({'log': 'cf2_navigation', 'session_id': 'one', 'data': {'state': 'HOVER'}}, now=3)
+        self.assertEqual(m.snapshot(now=3)['age_seconds'], 2)
+
+    def test_presentation_requires_persistence_and_expires_without_changing_control(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        cell = m.cell(1, 0)
+        self.assertEqual(m.snapshot(now=1)['data'][cell], 100)
+        self.assertEqual(m.snapshot(now=1)['presentation_data'][cell], -1)
+        for now in [1.2, 1.4, 1.7]:
+            m.update(ranges(), now=now)
+        self.assertEqual(m.snapshot(now=1.7)['presentation_data'][cell], 100)
+        self.assertEqual(m.snapshot(now=7)['presentation_data'][cell], -1)
+        self.assertEqual(m.snapshot(now=7)['data'][cell], 100)
+        self.assertEqual(m.snapshot(now=7)['recent_hits'], [])
+
+    def test_moving_object_can_clear_and_observations_expire(self):
+        m = LiveMap(decay_seconds=20)
+        m.update(pose(), now=1)
+        m.update(ranges(front=500), now=1)
+        self.assertEqual(m.snapshot(now=1)['data'][m.cell(.5, 0)], 100)
+        for i in range(4):
+            m.update(ranges(front=1000), now=2+i)
+        self.assertEqual(m.snapshot(now=5)['data'][m.cell(.5, 0)], 0)
+        self.assertTrue(all(v == -1 for v in m.snapshot(now=26)['data']))
+
+    def test_confirmed_survey_obstacle_survives_until_contradicted(self):
+        m = LiveMap(decay_seconds=600, persistent_seconds=600)
+        m.update(pose(), now=1)
+        for now in [1, 1.2, 1.4, 1.7]:
+            m.update(ranges(front=500), now=now)
+        cell = m.cell(.5, 0)
+        self.assertEqual(m.snapshot(now=1.7)['presentation_data'][cell], 100)
+        self.assertEqual(m.snapshot(now=90)['presentation_data'][cell], 100)
+        for now in [91, 91.2, 91.4, 91.6, 91.8, 92, 92.2]:
+            m.update(ranges(front=1000), now=now)
+        self.assertEqual(m.snapshot(now=92.2)['presentation_data'][cell], 0)
+
+    def test_display_home_matches_navigation_without_moving_observations(self):
+        m = LiveMap()
+        m.update(pose(), now=1)
+        m.update(ranges(), now=1)
+        before = m.snapshot(now=1)
+        m.update({'log': 'cf2_navigation', 'session_id': 'one',
+                  'data': {'start': [.02, -.01]}}, now=1.1)
+        after = m.snapshot(now=1.1)
+        self.assertEqual(after['start'], (.02, -.01))
+        self.assertEqual(after['origin'], before['origin'])
+        self.assertEqual(after['data'], before['data'])
+
+
+if __name__ == '__main__':
+    unittest.main()

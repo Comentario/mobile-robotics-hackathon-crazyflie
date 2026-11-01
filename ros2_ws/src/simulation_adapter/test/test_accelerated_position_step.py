@@ -1,4 +1,4 @@
-"""TP-10, paso 2: aceleración, frenado y convergencia sin ROS."""
+"""TP-10, step 2: acceleration, braking and convergence without ROS."""
 import math
 
 import pytest
@@ -11,7 +11,7 @@ def test_accelerates_from_rest_with_known_displacement():
     result = accelerated_position_step(state, (2, 0, 1), 0.5, 0.2, 0.1)
     assert result.vx == pytest.approx(0.02)
     assert result.x == pytest.approx(0.001)
-    assert state.x == 0 and state.vx == 0  # El estado anterior se conserva.
+    assert state.x == 0 and state.vx == 0  # The previous state is preserved.
     assert result.flying and result.z == 1
 
 

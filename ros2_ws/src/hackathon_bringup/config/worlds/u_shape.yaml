@@ -1,5 +1,5 @@
-# Trampa en U abierta hacia el dron (TP-31).
-# Formato: simulation_adapter/world.py
+# U-shaped trap open towards the drone (TP-31).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:

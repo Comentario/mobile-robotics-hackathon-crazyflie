@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-cf2/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -48,3 +49,5 @@ desktop.ini
 # Datos locales (ver data/README.md)
 data/bags/
 data/runs/
+.mcp.json
+.vscode/mcp.json

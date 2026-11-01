@@ -33,7 +33,7 @@ class Waypoint:
     z: float
 
 
-def load_mission(path):
+def load_mission(path, map_frame='map'):
     """Load and validate a waypoint mission YAML file."""
     with open(path, encoding='utf-8') as file:
         data = yaml.safe_load(file) or {}
@@ -42,9 +42,9 @@ def load_mission(path):
         raise ValueError('Mission YAML root must be a mapping')
 
     frame_id = data.get('frame_id', 'map')
-    if frame_id != 'map':
+    if frame_id != map_frame:
         raise ValueError(
-            f'Unsupported mission frame "{frame_id}"; expected "map"'
+            f'Unsupported mission frame "{frame_id}"; expected "{map_frame}"'
         )
 
     raw_waypoints = data.get('waypoints')
@@ -109,6 +109,7 @@ class MissionStateMachine:
         self.reason = ''
 
         self._state_before_pause = None
+        self._blocked_since = None
         self._waypoint_started_at = None
 
     @property
@@ -128,6 +129,7 @@ class MissionStateMachine:
         self.index = 0
         self.reason = ''
         self._state_before_pause = None
+        self._blocked_since = None
         self._waypoint_started_at = None
 
         return True, 'Mission started'
@@ -196,6 +198,14 @@ class MissionStateMachine:
             return ('none',)
 
         if self.state == NAVIGATE:
+            if safety_state == SAFETY_HOVER or health != HEALTH_GOOD:
+                if self._blocked_since is None:
+                    self._blocked_since = now
+                return ('none',)
+            if self._blocked_since is not None:
+                if self._waypoint_started_at is not None:
+                    self._waypoint_started_at += now-self._blocked_since
+                self._blocked_since = None
             waypoint = self.current_waypoint
 
             if waypoint is None:
@@ -256,6 +266,7 @@ class MissionStateMachine:
         if self.state != PAUSED or self._state_before_pause is None:
             return False, 'Mission is not paused'
 
+        self._blocked_since = None
         self.state = self._state_before_pause
         self._state_before_pause = None
         self.reason = ''
@@ -273,6 +284,7 @@ class MissionStateMachine:
         self.state = ABORTED
         self.reason = str(reason)
         self._state_before_pause = None
+        self._blocked_since = None
         self._waypoint_started_at = None
 
         return True, 'Mission aborted'

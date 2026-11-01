@@ -1,10 +1,10 @@
-"""Stack completo contra Crazyswarm2 (hardware real o backend sim de Crazyswarm2). TP-12, TP-42, VS-5.
+"""Full stack against Crazyswarm2 (real hardware or the Crazyswarm2 sim backend). TP-12, TP-42, VS-5.
 
-Requiere el servidor de Crazyswarm2 en marcha, en otra terminal:
-  ros2 launch crazyflie launch.py backend:=cflib     # hardware real
-  ros2 launch crazyflie launch.py backend:=sim       # nivel 2 de simulación (sin rangos)
+Requires the Crazyswarm2 server running, in another terminal:
+  ros2 launch crazyflie launch.py backend:=cflib     # real hardware
+  ros2 launch crazyflie launch.py backend:=sim       # simulation level 2 (no ranges)
 
-Uso:
+Usage:
   ros2 launch hackathon_bringup real.launch.py
   ros2 launch hackathon_bringup real.launch.py params:=simulation.yaml overlay:=cs2_sim.yaml mission:=missions/single.yaml
 """
