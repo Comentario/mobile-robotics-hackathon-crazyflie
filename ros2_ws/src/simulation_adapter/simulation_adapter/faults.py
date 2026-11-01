@@ -97,8 +97,15 @@ class FaultInjector:
 
         return copy.deepcopy(pose)
 
+    @staticmethod
+    def _time_at_or_before(pose_history, target_time):
+        return max(stamp for stamp, _ in pose_history if stamp <= target_time)
+
     def apply_to_pose(self, t, pose, pose_history):
-        """Apply delay, freeze, jump, and dropout faults."""
+        """Apply delay, freeze, jump, and dropout faults.
+
+        A delayed or frozen pose carries `stamp_t`, the simulation time of the sample.
+        """
         if self.active(t, 'pose_dropout'):
             return None
 
@@ -118,6 +125,7 @@ class FaultInjector:
                 return None
 
             result = delayed
+            result['stamp_t'] = self._time_at_or_before(pose_history, t - delay)
 
         freezes = self.active(t, 'pose_freeze')
 
@@ -133,6 +141,10 @@ class FaultInjector:
 
             if frozen is not None:
                 result = frozen
+                # A frozen estimator stops producing new measurements: keep the
+                # sample time so consumers see the pose age grow (state_monitor).
+                # A delayed sample keeps its measurement time in the same way.
+                result['stamp_t'] = self._time_at_or_before(pose_history, freeze_start)
 
         for fault in self.active(t, 'pose_jump'):
             offset = fault.get(

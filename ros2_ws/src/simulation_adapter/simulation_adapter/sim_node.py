@@ -1,31 +1,32 @@
-"""Simulador propio del Crazyflie: sustituye a cf_adapter durante el desarrollo (TP-10, TP-41).
+"""Our own Crazyflie simulator: replaces cf_adapter during development (TP-10, TP-41).
 
-Motivo: el backend `sim` de Crazyswarm2 no publica los rangos del Multi-ranger.
+Reason: the Crazyswarm2 `sim` backend does not publish the Multi-ranger ranges.
 
-Suscribe:
-  /hk/cmd/safe              hackathon_interfaces/Setpoint   (solo lo publica safety_supervisor)
-Publica:
-  /hk/adapter/odom          nav_msgs/Odometry               pose + velocidad "estimadas"
-  /hk/adapter/ranges        hackathon_interfaces/MultiRange rangos sintéticos con ruido opcional
-  /hk/sim/ground_truth      nav_msgs/Odometry               pose real, solo para métricas
-  /hk/sim/obstacles         visualization_msgs/MarkerArray  obstáculos del mundo para RViz
-Servicios:
+Subscribes:
+  /hk/cmd/safe              hackathon_interfaces/Setpoint   (only safety_supervisor publishes it)
+Publishes:
+  /hk/adapter/odom          nav_msgs/Odometry               "estimated" pose + velocity
+  /hk/adapter/ranges        hackathon_interfaces/MultiRange synthetic ranges with optional noise
+  /hk/sim/ground_truth      nav_msgs/Odometry               real pose, for metrics only
+  /hk/sim/obstacles         visualization_msgs/MarkerArray  world obstacles for RViz
+Services:
   /hk/takeoff               hackathon_interfaces/Takeoff
   /hk/land                  hackathon_interfaces/Land
   /hk/emergency             std_srvs/Trigger
-Parámetros:
+Parameters:
   world_file, scenario_file, sim_rate, state_rate, range_rate, max_speed, max_accel,
   range_noise_std, pose_noise_std, command_watchdog
 
-Implementado: comandos POSITION/VELOCITY/HOVER, servicios, odometría y mundo/rangos.
-Inyección de fallos de escenarios integrada del aporte de main; campaña completa TP-41 pendiente.
-Lógica: world.py (obstáculos + raycast), dynamics.py (modelo cinemático), faults.py (inyección).
+Implemented: POSITION/VELOCITY/HOVER commands, services, odometry and world/ranges.
+Scenario fault injection integrated from the main contribution; full TP-41 campaign pending.
+Logic: world.py (obstacles + raycast), dynamics.py (kinematic model), faults.py (injection).
 """
 from collections import deque
 import math
 import random
 
 import rclpy
+from rclpy.duration import Duration
 import yaml
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
@@ -71,9 +72,9 @@ class SimulationAdapter(Node):
             with open(world_file, encoding='utf-8') as f:
                 self.world = World.from_dict(yaml.safe_load(f))
         if not math.isfinite(self.range_rate) or self.range_rate <= 0:
-            raise ValueError('range_rate debe ser positivo y finito')
+            raise ValueError('range_rate must be positive and finite')
         if not math.isfinite(self.pose_noise_std) or self.pose_noise_std < 0:
-            raise ValueError('pose_noise_std debe ser finito y no negativo')
+            raise ValueError('pose_noise_std must be finite and non-negative')
         scenario_file = self.declare_parameter('scenario_file', '').value
         start = self.declare_parameter('initial_position', [0.0, 0.0, 0.0, 0.0]).value
         self.scenario = {}
@@ -85,12 +86,12 @@ class SimulationAdapter(Node):
         parameters = (state_rate, sim_rate, self.max_speed, self.max_accel,
                       self.response_time, self.command_watchdog)
         if not all(math.isfinite(value) and value > 0 for value in parameters):
-            raise ValueError('Tasas, límites y tiempos deben ser finitos y positivos')
+            raise ValueError('Rates, limits and times must be finite and positive')
         if len(start) != 4 or not all(math.isfinite(value) for value in start):
-            raise ValueError('La posición inicial debe contener x, y, z, yaw finitos')
+            raise ValueError('The initial position must contain finite x, y, z, yaw')
         self.dt = 1.0 / sim_rate
         if self.dt > self.response_time:
-            raise ValueError('El periodo de simulación debe ser menor que response_time')
+            raise ValueError('The simulation period must be shorter than response_time')
         initial = DroneState(x=float(start[0]), y=float(start[1]), z=float(start[2]),
                              yaw=float(start[3]), flying=start[2] > 0)
         self.drone = KinematicDrone(self.max_speed, self.max_accel, self.command_watchdog,
@@ -114,7 +115,7 @@ class SimulationAdapter(Node):
         self.state_timer = self.create_timer(1.0 / state_rate, self._publish_odom)
         self.range_timer = self.create_timer(1.0 / self.range_rate, self._publish_ranges)
         self.marker_timer = self.create_timer(0.1, self._publish_markers)
-        self.get_logger().info('Simulador TP-10 listo: comandos, servicios, odometría y seis rangos')
+        self.get_logger().info('TP-10 simulator ready: commands, services, odometry and six ranges')
 
     @property
     def state(self):
@@ -147,7 +148,7 @@ class SimulationAdapter(Node):
         values = (msg.position.x, msg.position.y, msg.position.z, msg.yaw,
                   msg.velocity.x, msg.velocity.y, msg.velocity.z)
         if msg.header.frame_id != self.map_frame or not 0 <= age <= self.command_watchdog:
-            self.get_logger().warn('Comando rechazado: frame incorrecto o timestamp vencido/futuro')
+            self.get_logger().warn('Command rejected: wrong frame or stale/future timestamp')
             return
         if not all(math.isfinite(value) for value in values):
             self.get_logger().warn('Comando rechazado: valores no finitos')
@@ -173,7 +174,7 @@ class SimulationAdapter(Node):
             self.pose_history.popleft()
         if previous_command is not None and self.last_command_time is None:
             self.last_command_stamp_ns = None
-            self.get_logger().warn('Timeout de comandos: capturando referencia HOVER')
+            self.get_logger().warn('Command timeout: capturing a HOVER reference')
         if previous_phase != self.drone.phase:
             self.get_logger().info(f'Estado simulado: {previous_phase} → {self.drone.phase}')
 
@@ -182,7 +183,7 @@ class SimulationAdapter(Node):
             self.drone.takeoff(request.height, request.duration)
             self.last_command_stamp_ns = None
             response.success = True
-            response.message = 'Despegue aceptado; comprobar altura en odometría para confirmar llegada'
+            response.message = 'Takeoff accepted; check the height in the odometry to confirm arrival'
         except ValueError as exc:
             response.success, response.message = False, str(exc)
         return response
@@ -192,7 +193,7 @@ class SimulationAdapter(Node):
             self.drone.land(request.duration)
             self.last_command_stamp_ns = None
             response.success = True
-            response.message = 'Aterrizaje aceptado; comprobar contacto con suelo en odometría'
+            response.message = 'Landing accepted; check ground contact in the odometry'
         except ValueError as exc:
             response.success, response.message = False, str(exc)
         return response
@@ -202,7 +203,7 @@ class SimulationAdapter(Node):
         self.drone.emergency_stop()
         self.last_command_stamp_ns = None
         response.success = True
-        response.message = 'Corte simulado: caída con gravedad; requiere reiniciar el simulador'
+        response.message = 'Simulated cut-off: gravity fall; the simulator must be restarted'
         return response
 
     def _publish_odom(self):
@@ -216,7 +217,7 @@ class SimulationAdapter(Node):
         msg.pose.pose.position.z = state.z
         msg.pose.pose.orientation.z = math.sin(state.yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(state.yaw / 2.0)
-        # Odometry expresa twist en el frame del cuerpo, no en map.
+        # Odometry expresses the twist in the body frame, not in map.
         c, s = math.cos(state.yaw), math.sin(state.yaw)
         msg.twist.twist.linear.x = c * state.vx + s * state.vy
         msg.twist.twist.linear.y = -s * state.vx + c * state.vy
@@ -226,13 +227,17 @@ class SimulationAdapter(Node):
         measured = self.fault_injector.apply_to_pose(
             self.elapsed, self._pose_dict(), list(self.pose_history))
         if measured is None:
-            return  # Ground truth continúa aunque se interrumpa la estimación.
+            return  # Ground truth continues even if the estimate is interrupted.
         for axis in ('x', 'y', 'z'):
             setattr(msg.pose.pose.position, axis, measured[axis])
         msg.pose.pose.orientation.z = math.sin(measured['yaw']/2)
         msg.pose.pose.orientation.w = math.cos(measured['yaw']/2)
-        # Pose delayed/frozen/jumped mantiene timestamp de publicación, como el aporte original.
-        # Referencia real sin ruido arriba; estimación sintética con ruido abajo.
+        # A delayed or frozen pose keeps the timestamp of its sample, as a late or stalled
+        # estimator would; a jumped pose keeps the publication timestamp.
+        if 'stamp_t' in measured:
+            age = Duration(seconds=max(0.0, self.elapsed - measured['stamp_t']))
+            msg.header.stamp = (self.get_clock().now() - age).to_msg()
+        # Noise-free real reference above; synthetic noisy estimate below.
         for axis in ('x', 'y', 'z'):
             value = getattr(msg.pose.pose.position, axis)
             setattr(msg.pose.pose.position, axis, value + self.rng.gauss(0, self.pose_noise_std))
@@ -266,7 +271,7 @@ class SimulationAdapter(Node):
         clear = Marker()
         clear.action = Marker.DELETEALL
         array.markers.append(clear)
-        # Sala y cajas en map; temporalidad/movimiento usan tiempo relativo al arranque.
+        # Room and boxes in map; timing/motion use the time relative to start-up.
         x0, y0, x1, y1 = self.world.bounds
         h = self.world.ceiling
         solids = [((x0, (y0+y1)/2, h/2), (0.02, y1-y0, h)),
