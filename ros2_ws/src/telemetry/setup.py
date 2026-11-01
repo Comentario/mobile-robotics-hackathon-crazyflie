@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Métricas de la misión y resumen por ejecución para la demo y la test matrix.',
+    description='Mission metrics and a per-run summary for the demo and the test matrix.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

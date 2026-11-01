@@ -3,13 +3,15 @@
 <package format="3">
   <name>telemetry</name>
   <version>0.1.0</version>
-  <description>Métricas de la misión y resumen por ejecución para la demo y la test matrix.</description>
+  <description>Mission metrics and a per-run summary for the demo and the test matrix.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>hackathon_interfaces</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>

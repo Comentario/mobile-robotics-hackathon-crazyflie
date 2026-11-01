@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Evaluador de escenarios de simulación: compara métricas con el resultado esperado (pass/fail).',
+    description='Simulation scenario evaluator: compares metrics with the expected result (pass/fail).',
     license='TODO',
     tests_require=['pytest'],
     entry_points={
