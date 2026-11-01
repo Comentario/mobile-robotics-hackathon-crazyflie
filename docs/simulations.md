@@ -1,55 +1,67 @@
-# Plan de simulación y pruebas
+# Simulation and test plan
 
-Qué simulamos, con qué herramienta y cómo se decide si un escenario pasa. Cubre la test matrix T01–T18 de [roadmap.md](roadmap.md#test-matrix-mínima).
+What we simulate, with which tool and how a scenario is decided to pass. It covers the T01–T18 test matrix of [roadmap.md](roadmap.md#minimum-test-matrix) and the cooperative scenario C01.
 
-## Cuatro niveles
+## Four levels
 
-| Nivel | Qué es | Qué valida | Qué **no** valida | Prioridad |
+| Level | What it is | What it validates | What it does **not** validate | Priority |
 |---|---|---|---|---|
-| **0 — Tests unitarios** | pytest sobre los módulos de lógica pura (`ros2_ws/src/*/test/`). | Algoritmos aislados: filtro de rangos, salud, A*, evitación, safety, geofence. | Integración, tiempos, ROS. | P0 |
-| **1 — Simulador propio** | `simulation_adapter`: modelo cinemático + mundo 2D con raycast de los 5 rangers + inyección de fallos. | Stack completo de punta a punta, escenarios T01–T16. | Dinámica real del Crazyflie y API de Crazyswarm2. | **P0, el principal** |
-| **2 — Crazyswarm2 `backend:=sim`** | Firmware real en software-in-the-loop, con `cf_adapter`. | Mapeo de comandos (takeoff, setpoints, land), nombres de topics, watchdog del firmware. | Rangos: no hay Multi-ranger simulado. | P0 (corto) |
-| **3 — Replay de rosbag** | `ros2 bag play` de ejecuciones grabadas. | Diagnóstico offline, regresiones (T18). | Nada nuevo; reproduce lo grabado. | P1 |
+| **0 — Unit tests** | pytest over the pure-logic modules (`ros2_ws/src/*/test/`). | Isolated algorithms: range filter, health, A*, avoidance, safety, geofence, map, metrics. | Integration, timing, ROS. | P0 |
+| **1 — Our own simulator** | `simulation_adapter`: kinematic model + 2D world with raycasts of the 5 rangers + fault injection. | Full end-to-end stack, scenarios T01–T16. | Real Crazyflie dynamics and the Crazyswarm2 API. | **P0, the main one** |
+| **2 — Crazyswarm2 `backend:=sim`** | Real firmware in software-in-the-loop, with `cf_adapter`. | Command mapping (takeoff, setpoints, land), topic names, firmware watchdog. | Ranges: there is no simulated Multi-ranger. | P0 (short) |
+| **3 — Rosbag replay** | `ros2 bag play` of recorded runs. | Offline diagnosis, regressions (T18). | Nothing new; it replays what was recorded. | P1 |
 
-**¿Por qué no Gazebo o Webots?** Montar el modelo con Multi-ranger cuesta días y añade dependencias. Para navegar en 2D con cinco rayos basta el nivel 1, rápido, determinista y con fallos inyectables. Queda como stretch goal si el nivel 1 se queda corto.
+**Why not Gazebo or Webots?** Building the model with the Multi-ranger takes days and adds dependencies. For 2D navigation with five rays level 1 is enough: fast, deterministic and with injectable faults. It stays a stretch goal if level 1 falls short.
 
-## Cómo ejecutar
+## How to run
 
 ```bash
-# Compilar (desde la raíz del repo, en WSL)
+# Build (from the repository root, in WSL)
 ./scripts/build.sh
 source ros2_ws/install/setup.bash
 
-# Nivel 0
+# Level 0
 cd ros2_ws && colcon test && colcon test-result --verbose
 
-# Nivel 1: un escenario con RViz
+# Level 1: one scenario with RViz
 ros2 launch hackathon_bringup simulation.launch.py scenario:=T05_popup_obstacle rviz:=true
 
-# Nivel 1: un escenario con evaluación pass/fail
+# Level 1: one scenario with pass/fail evaluation
 ros2 launch hackathon_bringup simulation.launch.py scenario:=T09_range_dropout evaluate:=true
 
-# Nivel 1: toda la matriz
+# Level 1: the whole matrix (results in /tmp/hk_runs/results.csv)
 ./scripts/run_all_scenarios.sh
 
-# Nivel 2: firmware SIL de Crazyswarm2 (dos terminales)
+# Level 2: Crazyswarm2 firmware SIL (two terminals)
 ros2 launch crazyflie launch.py backend:=sim
 ros2 launch hackathon_bringup real.launch.py params:=simulation.yaml overlay:=cs2_sim.yaml mission:=missions/single.yaml
 
-# Nivel 3: grabar y reproducir
+# Level 3: record and replay
 ./scripts/record_bag.sh T05
-ros2 bag play data/bags/<carpeta>
+ros2 bag play data/bags/<folder>
 ```
 
-## Estructura de un escenario
+## How a scenario is evaluated
 
-Un escenario es mundo + misión + fallos + resultado esperado. Ficheros en [`ros2_ws/src/hackathon_bringup/config/`](../ros2_ws/src/hackathon_bringup/config/):
+`evaluate:=true` starts `hackathon_tests/run_scenario`. `telemetry` accumulates the metrics of
+the run and publishes them on `/hk/metrics`: final mission state, waypoints, collisions and
+minimum obstacle clearance (against the simulator ground truth, `/hk/sim/ground_truth`, and
+the world boxes of `/hk/sim/obstacles`), the safety/health/planner states seen, `max |x|`,
+`max |y|`, `max z` and the final `z`. When the mission ends (COMPLETED/ABORTED, plus a few
+settle seconds so the landing is counted) or the scenario `timeout` expires, the runner
+compares the metrics with `expected`, prints PASS/FAIL, appends a row to
+`<output_dir>/results.csv` and exits with code 0/1, which shuts the launch down.
+`telemetry` also writes a JSON summary per run to `output_dir`.
+
+## Scenario structure
+
+A scenario is world + mission + faults + expected result. Files in [`ros2_ws/src/hackathon_bringup/config/`](../ros2_ws/src/hackathon_bringup/config/):
 
 ```yaml
 # config/scenarios/T09_range_dropout.yaml
-world: worlds/wall.yaml          # obstáculos (simulation_adapter/world.py)
+world: worlds/wall.yaml          # obstacles (simulation_adapter/world.py)
 mission: missions/line.yaml      # waypoints
-start: [-1.5, 0.0, 0.0, 0.0]     # x, y, z, yaw iniciales
+start: [-1.5, 0.0, 0.0, 0.0]     # initial x, y, z, yaw
 timeout: 60.0
 faults:                          # simulation_adapter/faults.py
   - {type: range_dropout, sensor: all, t_start: 5.0, t_end: 8.0}
@@ -58,63 +70,67 @@ expected:                        # hackathon_tests/scenario.py
   must_see_safety: [SLOW, HOVER]
 ```
 
-Fallos disponibles: `range_spike`, `range_dropout`, `pose_delay`, `pose_freeze`, `pose_jump`, `pose_dropout`, `command_pause`.
+Available faults: `range_spike`, `range_dropout`, `pose_delay`, `pose_freeze`, `pose_jump`, `pose_dropout`, `command_pause`.
 
-Claves de `expected`: `mission_state`, `max_collisions`, `min_obstacle_distance`, `must_see_safety`, `must_see_health`, `must_see_planner`, `max_abs_xy`, `max_z`, `final_z_max`. Las colisiones y la distancia mínima se calculan contra la pose real del simulador (`/hk/sim/ground_truth`), no contra la estimada.
+`expected` keys: `mission_state`, `max_collisions`, `min_obstacle_distance`, `must_see_safety`, `must_see_health`, `must_see_planner`, `max_abs_xy`, `max_z`, `final_z_max`. Collisions and the minimum distance are computed against the real simulator pose (`/hk/sim/ground_truth`), not against the estimated one. `must_see_*` lists alternatives: at least one of the listed states must be observed.
 
-Para añadir un escenario, copien uno existente, cambien mundo, fallos y `expected`, y añadan una fila a la tabla siguiente.
+To add a scenario, copy an existing one, change world, faults and `expected`, and add a row to the following table.
 
-## Catálogo de escenarios
+## Scenario catalogue
 
-| Escenario | Test | Mundo | Fallo | Comprueba | Necesita | Prioridad |
+| Scenario | Test | World | Fault | Checks | Needs | Priority |
 |---|---|---|---|---|---|---|
-| `T01_single_waypoint` | T01 | empty | — | Llega al waypoint | VS-1 | P0 |
-| `T02_multi_waypoint` | T02 | empty | — | Recorre los waypoints en orden | VS-1 | P0 |
-| `T03_static_wall` | T03 | wall | — | Rodea la pared | A* (`planner_mode: astar`) | P1 |
-| `T04_corridor` | T04 | corridor | — | Margen en el pasillo | Mapa + A* | P1 |
-| `T05_popup_obstacle` | T05 | popup | — | Slow/hover sin colisión | Evitación reactiva | P0 |
-| `T06_vanishing_obstacle` | T06 | vanishing | — | El decay libera la ruta | Mapa con decay | P1 |
-| `T07_approaching_obstacle` | T07 | approaching | — | El TTC frena | d_dot / TTC | P1 |
-| `T08_range_spike` | T08 | empty | `range_spike` | El spike no detiene la misión | Filtro de rangos | P0 |
-| `T09_range_dropout` | T09 | wall | `range_dropout` | Degrada sin chocar | Watchdog de rangos | P0 |
+| `T01_single_waypoint` | T01 | empty | — | Reaches the waypoint | VS-1 | P0 |
+| `T02_multi_waypoint` | T02 | empty | — | Follows the waypoints in order | VS-1 | P0 |
+| `T03_static_wall` | T03 | wall | — | Goes around the wall | A* (`planner_mode: astar`) | P1 |
+| `T04_corridor` | T04 | corridor | — | Margin in the corridor | Map + A* | P1 |
+| `T05_popup_obstacle` | T05 | popup | — | Slow/hover without collision | Reactive avoidance | P0 |
+| `T06_vanishing_obstacle` | T06 | vanishing | — | The decay frees the route | Map with decay | P1 |
+| `T07_approaching_obstacle` | T07 | approaching | — | The TTC brakes | d_dot / TTC | P1 |
+| `T08_range_spike` | T08 | empty | `range_spike` | The spike does not stop the mission | Range filter | P0 |
+| `T09_range_dropout` | T09 | wall | `range_dropout` | Degrades without crashing | Range watchdog | P0 |
 | `T10_pose_delay` | T10 | empty | `pose_delay` | Health DEGRADED/LOST | Health monitor | P0 |
 | `T11_pose_freeze` | T11 | empty | `pose_freeze` | LOST → hover | Health + safety | P0 |
 | `T12_localization_lost` | T12 | empty | `pose_dropout` | Hover → land | Safety (`lost_policy`) | P0 |
-| `T13_no_path` | T13 | blocked_goal | — | NO_PATH, no avanza a ciegas | A* | P1 |
-| `T14_geofence` | T14 | empty | — | Setpoint recortado | Geofence | P0 |
-| `T15_altitude_envelope` | T15 | low_ceiling | — | No supera z_max ni el techo | Envelope + `up_range` | P0 |
-| `T16_command_stop` | T16 | empty | `command_pause` | Watchdog / hover | Watchdog del sim | P0 |
-| — | T17 | — | Matar un nodo | Ver procedimiento manual | — | P1 |
-| — | T18 | — | — | Replay de rosbag | — | P1 |
+| `T13_no_path` | T13 | blocked_goal | — | NO_PATH, does not advance blindly | A* | P1 |
+| `T14_geofence` | T14 | empty | — | Setpoint clamped | Geofence | P0 |
+| `T15_altitude_envelope` | T15 | low_ceiling | — | Exceeds neither z_max nor the ceiling | Envelope + `up_range` | P0 |
+| `T16_command_stop` | T16 | empty | `command_pause` | Watchdog / hover | Simulator watchdog | P0 |
+| — | T17 | — | Kill a node | See manual procedure | — | P1 |
+| — | T18 | — | — | Rosbag replay | — | P1 |
+| `C01_cooperative_route` | C01 | cooperative_room | — | CF1 flies the CF2-planned route | `route` key, `simulation_cf.launch.py` | P0 |
 
-Los escenarios P1 fallarán con `planner_mode: direct`: es lo esperado mientras A* no exista.
+`simulation.yaml` uses `planner_mode: astar` with the `local_world_model` map, so the P1
+scenarios run with the full planner. C01 uses the Crazyswarm2-API path
+(`simulation_cf.launch.py`) and is checked with `scripts/verify_mvp_integration.py`; it is
+not part of `run_all_scenarios.sh`.
 
-## Procedimientos manuales
+## Manual procedures
 
-**T17 — reinicio de un nodo.** Con `T02_multi_waypoint` en marcha, ejecutar `pkill -f local_navigator_node`. Esperado: sin `/hk/cmd/nav`, safety_supervisor detecta `command_timeout` → HOVER. Relanzar el nodo con `ros2 run local_navigator local_navigator_node --ros-args --params-file ...` y comprobar que la misión continúa o aborta de forma controlada. Repetir con `state_monitor` (→ LOST) y con `safety_supervisor` (→ watchdog del adapter: hover).
+**T17 — node restart.** With `T02_multi_waypoint` running, run `pkill -f local_navigator_node`. Expected: without `/hk/cmd/nav`, safety_supervisor detects `command_timeout` → HOVER. Restart the node with `ros2 run local_navigator local_navigator_node --ros-args --params-file ...` and check that the mission continues or aborts in a controlled way. Repeat with `state_monitor` (→ LOST) and with `safety_supervisor` (→ adapter watchdog: hover).
 
-**T18 — replay.** Grabar `T05_popup_obstacle` con `scripts/record_bag.sh`, reproducir el bag sin el simulador y comprobar en RViz/PlotJuggler que se ve el momento del obstáculo, el cambio de `safety_state` y el replan.
+**T18 — replay.** Record `T05_popup_obstacle` with `scripts/record_bag.sh`, replay the bag without the simulator and check in RViz/PlotJuggler that the obstacle moment, the `safety_state` change and the replan are visible.
 
-## Fidelidad mínima del simulador propio
+## Minimum fidelity of our own simulator
 
-Para que los resultados del nivel 1 sirvan de algo:
+For the level 1 results to be meaningful:
 
-- **Rangos:** raycast contra paredes, techo, suelo y obstáculos; ruido gaussiano; `+inf` más allá de `range_max`; tasa ~20 Hz.
-- **Pose:** ruido pequeño, tasa ~50 Hz; los fallos se aplican **solo a la pose publicada**, nunca a la pose real.
-- **Dinámica:** límites de velocidad y aceleración; respuesta de primer orden al setpoint.
-- **Watchdog:** si no llegan setpoints durante `command_watchdog`, hover. Ajustar al comportamiento real del firmware en cuanto se confirme (TP-08).
-- **Colisión:** si la pose real toca un obstáculo, se cuenta y se publica; el escenario falla con `max_collisions: 0`.
+- **Ranges:** raycasts against walls, ceiling, floor and obstacles; Gaussian noise; `+inf` beyond `range_max`; rate ~20 Hz.
+- **Pose:** small noise, rate ~50 Hz; faults are applied **only to the published pose**, never to the real pose.
+- **Dynamics:** speed and acceleration limits; first-order response to the setpoint.
+- **Watchdog:** if no setpoints arrive for `command_watchdog`, hover. Adjust to the real firmware behaviour once confirmed (TP-08).
+- **Collision:** `telemetry` counts every new contact of the real pose with an obstacle or wall; the scenario fails with `max_collisions: 0`.
 
-## MVP integrado de las tres personas (rama integration-mvp-crazyswarm)
+## Integrated MVP of the three persons (branch integration-mvp-crazyswarm)
 
-Se conserva el cf_adapter de main, se incorporan percepción y seguridad de persona 2,
-y misión/navegación de persona 3. Todos usan reloj ROS para datos y control;
-`time.monotonic()` solo limita esperas del script de prueba. En SIL todos consumen `/clock`.
-El navegador propone velocidad XY con altura del waypoint; cf_adapter genera FullState.
-`/hk/safety_state` comunica estado; `/hk/cmd/safe` comunica órdenes: son mensajes distintos.
-Los planners y telemetría siguen siendo esqueletos; el MVP usa la ruta directa.
+The cf_adapter of main is kept, the perception and safety of person 2 are added, and the
+mission/navigation of person 3. All of them use the ROS clock for data and control;
+`time.monotonic()` only bounds the waits of the test script. In SIL they all consume `/clock`.
+The navigator proposes an XY velocity with the waypoint height; cf_adapter generates FullState.
+`/hk/safety_state` communicates the state; `/hk/cmd/safe` communicates commands: they are
+different messages.
 
-En Ubuntu 24.04/ROS Jazzy, desde la raíz del repositorio:
+On Ubuntu 24.04/ROS Jazzy, from the repository root:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -124,44 +140,47 @@ export ROS_DOMAIN_ID=93
 export ROS_LOCALHOST_ONLY=1
 python3 scripts/verify_mvp_integration.py
 python3 scripts/verify_mvp_integration.py --scenario T02_multi_waypoint
+python3 scripts/verify_mvp_integration.py --scenario C01_cooperative_route
 ```
 
-Ambas pruebas arrancan y cierran los nodos, esperan salud/seguridad normales,
-inician la misión por servicio y comprueban llegada, aterrizaje, frames, tópicos
-observados y publisher único. Logs en `/tmp/hk_mvp_emulator_*.log`.
-Para observar el sistema y abrir rqt_graph/RViz por separado:
+These tests start and stop the nodes, wait for normal health/safety, start the mission
+through the service and check arrival, landing, frames, the observed topics and a single
+publisher. Logs in `/tmp/hk_mvp_emulator_*.log`. To watch the system and open rqt_graph/RViz
+separately:
 
 ```bash
 ros2 launch hackathon_bringup simulation_cf.launch.py backend:=emulator scenario:=T01_single_waypoint
+ros2 launch hackathon_bringup simulation_cf.launch.py scenario:=C01_cooperative_route rviz:=true
 ```
 
-### Crazyswarm2 SIL con sensores sintéticos
+### Crazyswarm2 SIL with synthetic sensors
 
-Requiere `crazyflie_sim`, backend `np` y bindings `cffirmware` compilados para la
-versión de Python/ROS de esa máquina. No copiar binarios de Humble a Jazzy.
-En un primer terminal, tras cargar ROS y el workspace, y exportar el mismo dominio:
+It requires `crazyflie_sim`, the `np` backend and `cffirmware` bindings built for the
+Python/ROS version of that machine. Do not copy Humble binaries to Jazzy.
+In a first terminal, after sourcing ROS and the workspace, and exporting the same domain:
 
 ```bash
-# Si cffirmware no está instalado en Python, añadir su directorio build a PYTHONPATH.
+# If cffirmware is not installed in Python, add its build directory to PYTHONPATH.
 python3 scripts/run_crazyswarm_sil.py --scenario T01_single_waypoint
 ```
 
-El script usa el servidor instalado y su descripción URDF, habilita únicamente
-cf231 y TF, establece la posición inicial del escenario y publica /clock.
-En otro terminal con el mismo entorno:
+The script uses the installed server and its URDF description, enables only cf231 and TF,
+sets the initial position of the scenario and publishes /clock. In another terminal with
+the same environment:
 
 ```bash
 python3 scripts/verify_mvp_integration.py --backend sil --timeout 300
-# O ejecución visible y autostart:
+# Or a visible run with autostart:
 ros2 launch hackathon_bringup simulation_cf.launch.py backend:=sil scenario:=T01_single_waypoint
 ```
 
-Usar el mismo escenario en ambos terminales. Para T02 reiniciar el servidor con
-`--scenario T02_multi_waypoint` y pasar ese argumento también al verificador.
-La simulación SIL instalada no implementa emergency ni notify_setpoints_stop:
-la prueba de misión no certifica esos servicios ni el watchdog real.
-La compatibilidad final con ROS Jazzy debe validarse en el equipo de persona 2.
+Use the same scenario in both terminals. For T02 restart the server with
+`--scenario T02_multi_waypoint` and pass that argument to the verifier as well.
+The installed SIL simulation does not implement emergency nor notify_setpoints_stop:
+the mission test certifies neither those services nor the real watchdog.
+Final compatibility with ROS Jazzy must be validated on the machine of person 2.
 
-Validación local (ROS Humble, 2026-10-08): 14 paquetes compilados; 147 tests
-aprobados y 19 pendientes/omitidos; T01 y T02 completados con emulator,
-T01 completado con Crazyswarm2 SIL. Esto no sustituye la ejecución en Jazzy.
+Local validation (ROS Humble, 2026-10-08): 14 packages built; 147 tests passed and
+19 pending/skipped; T01 and T02 completed with the emulator, T01 completed with Crazyswarm2
+SIL. This does not replace running on Jazzy. The current results are in the
+[README](../README.md#verification).

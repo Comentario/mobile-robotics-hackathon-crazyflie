@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Valida TP-42 C sin ROS ni conexión al hardware; --ready rechaza placeholders."""
+"""Validates TP-42 C without ROS or a hardware connection; --ready rejects placeholders."""
 import argparse
 from pathlib import Path
 import sys
@@ -22,15 +22,15 @@ def main():
         data = [yaml.safe_load(path.read_text()) for path in (args.params,args.hardware,args.mission)]
         errors, pending = validate_event(*data)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
-        print(f'ERROR: configuración incompleta o inválida: {exc}')
+        print(f'ERROR: incomplete or invalid configuration: {exc}')
         return 1
     for error in errors:
         print(f'ERROR: {error}')
     for item in pending:
-        print(f'PENDIENTE: {item}')
+        print(f'PENDING: {item}')
     if errors or (args.ready and pending):
         return 1
-    print('OK: coherencia estática de la plantilla; no valida hardware, frames medidos ni vuelo.')
+    print('OK: static template consistency; it does not validate hardware, measured frames or flight.')
     return 0
 
 

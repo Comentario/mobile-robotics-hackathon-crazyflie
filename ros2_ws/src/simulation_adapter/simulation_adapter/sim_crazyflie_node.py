@@ -1,44 +1,44 @@
-"""Dron simulado con la MISMA API ROS que crazyflie_server de Crazyswarm2 (TP-10).
+"""Simulated drone with the SAME ROS API as the Crazyswarm2 crazyflie_server (TP-10).
 
-Objetivo: que cf_adapter no note si debajo hay un dron simulado o el real.
-En Dresden este nodo se sustituye por crazyflie_server + Crazyradio + dron real;
-cf_adapter y el resto del stack no cambian.
+Goal: cf_adapter must not notice whether a simulated or the real drone is below it.
+In Dresden this node is replaced by crazyflie_server + Crazyradio + real drone;
+cf_adapter and the rest of the stack do not change.
 
-API copiada de Crazyswarm2 1.0.7 (crazyflie_server_cpp/src/crazyflie_server.cpp):
+API copied from Crazyswarm2 1.0.7 (crazyflie_server_cpp/src/crazyflie_server.cpp):
 
-Suscribe:
-  /<robot>/cmd_full_state        crazyflie_interfaces/FullState   setpoint de bajo nivel
-Servicios:
+Subscribes:
+  /<robot>/cmd_full_state        crazyflie_interfaces/FullState   low-level setpoint
+Services:
   /<robot>/takeoff               crazyflie_interfaces/Takeoff     high-level commander
   /<robot>/land                  crazyflie_interfaces/Land        high-level commander
-  /<robot>/emergency             std_srvs/Empty                   motores fuera
+  /<robot>/emergency             std_srvs/Empty                   motors off
   /<robot>/notify_setpoints_stop crazyflie_interfaces/NotifySetpointsStop
-Publica:
-  /<robot>/pose                  geometry_msgs/PoseStamped  frame 'world' (estimación sintética)
-  TF world -> <robot>            igual que la pose (Crazyswarm2 publica los dos)
+Publishes:
+  /<robot>/pose                  geometry_msgs/PoseStamped  frame 'world' (synthetic estimate)
+  TF world -> <robot>            same as the pose (Crazyswarm2 publishes both)
   /<robot>/scan                  sensor_msgs/LaserScan      [back, right, front, left]
   /<robot>/ranges_extra          crazyflie_interfaces/LogDataGeneric  [range.up, range.zrange] mm
-Solo de simulación (no existen con el dron real):
-  /hk/sim/ground_truth           nav_msgs/Odometry          pose real, para métricas
+Simulation only (they do not exist with the real drone):
+  /hk/sim/ground_truth           nav_msgs/Odometry          real pose, for metrics
   /hk/sim/obstacles              visualization_msgs/MarkerArray
 
-Qué bloque del dron real imita cada parte (ver docs/sensor_model.md)
--------------------------------------------------------------------
-  Commander, controlador, motores -> dynamics.py (KinematicDrone, firmware_watchdog=True)
-  EKF (pose estimada)             -> pose real + ruido + fallos (faults.py)
-  Multi-ranger, ToF del Flow deck -> world.py (raycast) + ruido + fallos (faults.py)
-  Lighthouse deck, bases, IMU     -> no se simulan (su efecto está en el ruido de pose)
-  Sala                            -> world.py + config/worlds/*.yaml
+Which block of the real drone each part mimics (see docs/sensor_model.md)
+-------------------------------------------------------------------------
+  Commander, controller, motors   -> dynamics.py (KinematicDrone, firmware_watchdog=True)
+  EKF (estimated pose)            -> real pose + noise + faults (faults.py)
+  Multi-ranger, Flow deck ToF     -> world.py (raycast) + noise + faults (faults.py)
+  Lighthouse deck, bases, IMU     -> not simulated (their effect is in the pose noise)
+  Room                            -> world.py + config/worlds/*.yaml
 
-Comportamientos del firmware que se aproximan, sin certificar equivalencia
------------------------------------------------
-  - Prioridad: tras recibir cmd_full_state, takeoff/land se IGNORAN hasta que se
-    llama a notify_setpoints_stop (commanders_setpoints de Bitcraze: "Low level
+Firmware behaviours that are approximated, without certifying equivalence
+-------------------------------------------------------------------------
+  - Priority: after cmd_full_state is received, takeoff/land are IGNORED until
+    notify_setpoints_stop is called (Bitcraze commanders_setpoints: "Low level
     setpoints will always have higher priority").
-  - Watchdog (supervisor.c, firmware 2025.02): sin setpoints de bajo nivel 0.5 s ->
-    nivelado (deriva); 2.0 s -> motores fuera (cae).
-  - emergency: motores fuera, el dron cae y no acepta más órdenes (hay que
-    reiniciar el nodo, como reiniciar el dron real).
+  - Watchdog (supervisor.c, firmware 2025.02): no low-level setpoints for 0.5 s ->
+    level out (drift); 2.0 s -> motors off (falls).
+  - emergency: motors off, the drone falls and accepts no more commands (the node
+    must be restarted, like restarting the real drone).
 """
 from collections import deque
 import math
@@ -64,16 +64,16 @@ from .emulator.world import World
 
 POSE_HISTORY_SECONDS = 5.0
 
-# Rangers (VL53L1x): alcance físico simulado. Crazyswarm2 recorta el scan a 3.49 m.
+# Rangers (VL53L1x): simulated physical range. Crazyswarm2 clips the scan at 3.49 m.
 SENSOR_MAX_RANGE = 4.0
 SCAN_RANGE_MIN = 0.01        # crazyflie_server.cpp: msg.range_min = 0.01
 SCAN_RANGE_MAX = 3.49        # crazyflie_server.cpp: max_range = 3.49 -> +inf
-# Valor en mm que se publica en ranges_extra cuando no hay retorno.
-# Nota mía: el valor exacto del firmware real está por verificar en Dresden;
-# cf_adapter trata cualquier valor > range_max como +inf.
+# Value in mm published in ranges_extra when there is no return.
+# Note: the exact value of the real firmware was still to be verified in Dresden;
+# cf_adapter treats any value > range_max as +inf.
 NO_RETURN_MM = 8000.0
 
-DRONE_RADIUS = 0.06          # m, nota mía: aproximado para el Crazyflie 2.1 Brushless
+DRONE_RADIUS = 0.06          # m, approximation for the Crazyflie 2.1 Brushless
 
 SENSOR_DIRECTIONS = {
     'front': (1.0, 0.0, 0.0),
@@ -86,7 +86,7 @@ SENSOR_DIRECTIONS = {
 
 
 def quaternion_to_yaw(q):
-    """Yaw (rad) de un cuaternión geometry_msgs."""
+    """Yaw (rad) of a geometry_msgs quaternion."""
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
@@ -115,7 +115,7 @@ class SimCrazyflie(Node):
         scenario_file = p('scenario_file', '').value
         world_file = p('world_file', '').value
 
-        # Escenario: pose inicial y fallos. Mundo: paredes y obstáculos.
+        # Scenario: initial pose and faults. World: walls and obstacles.
         start, faults = [0.0, 0.0, 0.0, 0.0], []
         if scenario_file:
             with open(scenario_file, encoding='utf-8') as f:
@@ -130,7 +130,7 @@ class SimCrazyflie(Node):
         else:
             self.world = World.empty()
 
-        # Dron: dynamics.py con el watchdog del firmware real.
+        # Drone: dynamics.py with the real firmware watchdog.
         self.drone = KinematicDrone(max_speed, max_accel, levelout_timeout,
                                     firmware_watchdog=True,
                                     shutdown_timeout=shutdown_timeout)
@@ -140,12 +140,12 @@ class SimCrazyflie(Node):
         self.last_ros_time = self.get_clock().now().nanoseconds / 1e9
         self.rng = random.Random(p('random_seed', 0).value)
         self._last_mode = self.drone.mode
-        self.low_level_priority = False      # True tras recibir cmd_full_state
+        self.low_level_priority = False      # True after cmd_full_state is received
         self.pose_history = deque(maxlen=int(POSE_HISTORY_SECONDS * pose_rate))
 
         name = lambda suffix: f'/{self.robot}/{suffix}'   # noqa: E731
 
-        # --- API de crazyflie_server ------------------------------------------
+        # --- crazyflie_server API ---------------------------------------------
         self.create_subscription(FullState, name('cmd_full_state'), self._on_full_state, 10)
         self.create_service(Takeoff, name('takeoff'), self._on_takeoff)
         self.create_service(Land, name('land'), self._on_land)
@@ -156,7 +156,7 @@ class SimCrazyflie(Node):
         self.extra_pub = self.create_publisher(LogDataGeneric, name('ranges_extra'), 10)
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        # --- Solo simulación ----------------------------------------------------
+        # --- Simulation only ----------------------------------------------------
         self.truth_pub = self.create_publisher(Odometry, '/hk/sim/ground_truth', 10)
         self.obstacles_pub = self.create_publisher(MarkerArray, '/hk/sim/obstacles', 10)
 
@@ -166,16 +166,16 @@ class SimCrazyflie(Node):
         self.create_timer(1.0, self._publish_obstacles)
 
         self.get_logger().info(
-            f'sim_crazyflie listo: robot {self.robot}, pose inicial {start}, '
-            f'mundo {world_file or "vacío"} ({len(self.world.obstacles)} obstáculos), '
-            f'fallos {[f["type"] for f in faults] or "ninguno"}'
+            f'sim_crazyflie ready: robot {self.robot}, initial pose {start}, '
+            f'world {world_file or "empty"} ({len(self.world.obstacles)} obstacles), '
+            f'faults {[f["type"] for f in faults] or "none"}'
         )
 
     # ------------------------------------------------------------------
-    # API de crazyflie_server
+    # crazyflie_server API
     # ------------------------------------------------------------------
     def _on_full_state(self, msg):
-        """Setpoint de bajo nivel: posición + yaw (la velocidad se ignora)."""
+        """Low-level setpoint: position + yaw (the velocity is ignored)."""
         if self.faults.drop_command(self.sim_time):
             return                                   # command_pause
         command = Command(
@@ -187,14 +187,14 @@ class SimCrazyflie(Node):
             self.low_level_priority = True
         else:
             self.get_logger().warn(
-                f'cmd_full_state ignorado: el dron está en modo {self.drone.mode}',
+                f'cmd_full_state ignored: the drone is in mode {self.drone.mode}',
                 throttle_duration_sec=2.0,
             )
 
     def _on_takeoff(self, request, response):
         if self.low_level_priority:
-            self.get_logger().warn('takeoff ignorado: prioridad de bajo nivel activa '
-                                   '(falta notify_setpoints_stop), como en el firmware')
+            self.get_logger().warn('takeoff ignored: low-level priority active '
+                                   '(notify_setpoints_stop missing), as in the firmware')
             return response
         ok, message = self.drone.takeoff(request.height, duration_to_sec(request.duration))
         self.get_logger().info(f'takeoff -> {message}')
@@ -202,8 +202,8 @@ class SimCrazyflie(Node):
 
     def _on_land(self, request, response):
         if self.low_level_priority:
-            self.get_logger().warn('land ignorado: prioridad de bajo nivel activa '
-                                   '(falta notify_setpoints_stop), como en el firmware')
+            self.get_logger().warn('land ignored: low-level priority active '
+                                   '(notify_setpoints_stop missing), as in the firmware')
             return response
         ok, message = self.drone.land(duration_to_sec(request.duration))
         self.get_logger().info(f'land -> {message}')
@@ -212,21 +212,21 @@ class SimCrazyflie(Node):
     def _on_emergency(self, request, response):
         del request
         self.drone.emergency_stop('emergency')
-        self.get_logger().error('emergency -> motores apagados, el dron cae')
+        self.get_logger().error('emergency -> motors off, the drone falls')
         return response
 
     def _on_notify(self, request, response):
-        """El high-level commander recupera el control (hover donde está)."""
+        """The high-level commander takes control back (hover where the drone is)."""
         self.low_level_priority = False
         self.drone.high_level_hover()
         self.get_logger().info(
             f'notify_setpoints_stop (remain_valid {request.remain_valid_millisecs} ms) '
-            '-> high-level commander activo'
+            '-> high-level commander active'
         )
         return response
 
     # ------------------------------------------------------------------
-    # Simulación
+    # Simulation
     # ------------------------------------------------------------------
     def _step(self):
         now = self.get_clock().now().nanoseconds / 1e9
@@ -234,7 +234,7 @@ class SimCrazyflie(Node):
         self.last_ros_time = now
         if dt <= 0:
             return
-        # Subpasos conservan estabilidad cuando un callback llega tarde.
+        # Substeps keep the integration stable when a callback arrives late.
         remaining = min(dt, 0.5)
         while remaining > 1e-9:
             step = min(self.dt, remaining)
@@ -246,26 +246,26 @@ class SimCrazyflie(Node):
         if self.drone.mode != self._last_mode:
             extra = ''
             if self.drone.mode == 'level_out':
-                extra = ' (watchdog del firmware: 0.5 s sin setpoints, el dron deriva)'
+                extra = ' (firmware watchdog: 0.5 s without setpoints, the drone drifts)'
             elif self.drone.mode == 'emergency' and self.drone.emergency_reason == 'watchdog':
-                extra = ' (watchdog del firmware: 2 s sin setpoints, MOTORES FUERA)'
+                extra = ' (firmware watchdog: 2 s without setpoints, MOTORS OFF)'
             log = self.get_logger().error if self.drone.mode == 'emergency' else \
                 self.get_logger().info
-            log(f'Modo: {self._last_mode} -> {self.drone.mode}{extra}')
+            log(f'Mode: {self._last_mode} -> {self.drone.mode}{extra}')
             if self.drone.mode in ('idle', 'hover', 'emergency'):
                 self.low_level_priority = False
             self._last_mode = self.drone.mode
 
         active = self.faults.active_types(self.sim_time)
         if active != self._last_faults:
-            self.get_logger().warn(f't={self.sim_time:.1f} s  fallos activos: {active or "ninguno"}')
+            self.get_logger().warn(f't={self.sim_time:.1f} s  active faults: {active or "none"}')
             self._last_faults = active
 
         before = self.world.collision_count
         self.world.collides((s.x, s.y, s.z), DRONE_RADIUS, self.sim_time)
         if self.world.collision_count != before:
             self.get_logger().error(
-                f'COLISIÓN #{self.world.collision_count} en t={self.sim_time:.1f} s '
+                f'COLLISION #{self.world.collision_count} at t={self.sim_time:.1f} s '
                 f'pos=({s.x:.2f}, {s.y:.2f}, {s.z:.2f})'
             )
 
@@ -280,7 +280,7 @@ class SimCrazyflie(Node):
         }
 
     def _publish_pose(self):
-        """Pose del "EKF" (con ruido y fallos) como /<robot>/pose + TF; pose real aparte."""
+        """'EKF' pose (with noise and faults) as /<robot>/pose + TF; real pose separately."""
         stamp_sec = self.get_clock().now().nanoseconds * 1e-9
 
         truth = self._sample(stamp_sec, 0.0)
@@ -302,7 +302,7 @@ class SimCrazyflie(Node):
         self.pose_history.append(sample)
         pose = self.faults.apply_to_pose(self.sim_time, sample, self.pose_history)
         if pose is None:
-            return                                   # pose_dropout: no se publica nada
+            return                                   # pose_dropout: nothing is published
 
         msg = PoseStamped()
         msg.header.stamp = self._stamp(pose['stamp'])
@@ -324,7 +324,7 @@ class SimCrazyflie(Node):
         self.tf_broadcaster.sendTransform(tf)
 
     def _publish_ranges(self):
-        """Multi-ranger + ToF del Flow deck: raycast, ruido, fallos, formato Crazyswarm2."""
+        """Multi-ranger + Flow deck ToF: raycast, noise, faults, Crazyswarm2 format."""
         s = self.drone.state
         cos_y, sin_y = math.cos(s.yaw), math.sin(s.yaw)
         ranges = {}
@@ -342,7 +342,7 @@ class SimCrazyflie(Node):
 
         now = self.get_clock().now().to_msg()
 
-        # /<robot>/scan igual que crazyflie_server.cpp (on_logging_scan).
+        # /<robot>/scan same as crazyflie_server.cpp (on_logging_scan).
         def scan_value(d):
             return math.inf if d > SCAN_RANGE_MAX else d
         scan = LaserScan()
@@ -356,7 +356,7 @@ class SimCrazyflie(Node):
         scan.ranges = [float(scan_value(ranges[k])) for k in ('back', 'right', 'front', 'left')]
         self.scan_pub.publish(scan)
 
-        # /<robot>/ranges_extra: [range.up, range.zrange] en mm (custom topic).
+        # /<robot>/ranges_extra: [range.up, range.zrange] in mm (custom topic).
         def mm(d):
             if math.isnan(d):
                 return math.nan

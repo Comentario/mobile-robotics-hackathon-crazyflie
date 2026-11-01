@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Supervisor de seguridad independiente del planner: puede anular cualquier comando.',
+    description='Safety supervisor independent of the planner: it can override any command.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

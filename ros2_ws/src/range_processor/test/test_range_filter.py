@@ -1,4 +1,4 @@
-"""Pruebas de range_filter.py (TP-20). Ejecutar: python3 -m pytest test/test_range_filter.py"""
+"""Tests of range_filter.py (TP-20). Run: python3 -m pytest test/test_range_filter.py"""
 import math
 
 from range_processor.range_filter import (
@@ -74,7 +74,7 @@ def test_ttc_cases():
 
 
 def test_flicker_at_max_range_is_not_a_spike():
-    """Crazyswarm2 corta en 3.49 m: 3.48 <-> +inf es salir de alcance, no un spike."""
+    """Crazyswarm2 cuts at 3.49 m: 3.48 <-> +inf is leaving the range, not a spike."""
     f = RangeFilter(CONFIG)
     for i in range(40):
         f.update(i * 0.05, _raw(3.48 if i % 2 else math.inf))

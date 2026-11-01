@@ -1,6 +1,6 @@
-"""Sensores virtuales del SIL: TF físico → pose, LaserScan y logging vertical.
+"""Virtual SIL sensors: physical TF -> pose, LaserScan and vertical logging.
 
-No integra movimiento ni envía comandos. Conserva la API /<robot>/* de persona 2.
+It does not integrate motion nor send commands. Keeps the /<robot>/* API of person 2.
 """
 import math
 import random

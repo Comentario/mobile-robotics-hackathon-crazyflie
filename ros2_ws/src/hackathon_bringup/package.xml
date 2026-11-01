@@ -3,7 +3,7 @@
 <package format="3">
   <name>hackathon_bringup</name>
   <version>0.1.0</version>
-  <description>Launch files y configuración (parámetros, frames, mundos, misiones, escenarios).</description>
+  <description>Launch files and configuration (parameters, frames, worlds, missions, scenarios).</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

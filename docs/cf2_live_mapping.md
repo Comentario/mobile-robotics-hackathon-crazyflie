@@ -1,13 +1,13 @@
-# Mapeado 2D durante el vuelo del dron 2
+# 2D mapping during the drone 2 flight
 
-**Para navegación con evitación y retorno, usar la nueva
-[guía autónoma CF2](cf2_autonomous_demo.md).** Los comandos de recorrido
-de este documento sin `--navigate` son pruebas abiertas de mapeado.
+**For navigation with avoidance and return, use the newer
+[CF2 autonomous guide](cf2_autonomous_demo.md).** The flight commands in this
+document without `--navigate` are open-loop mapping tests.
 
-Un único vuelo produce telemetría, mapa incremental y visualización. No hace
-falta aterrizar para calcular el mapa. No utiliza Lighthouse ni conecta al dron 1.
+A single flight produces telemetry, an incremental map and the visualization. There is
+no need to land to compute the map. It does not use Lighthouse nor connect to drone 1.
 
-## Terminal 1: mapa y publicación ROS
+## Terminal 1: map and ROS publication
 
 ```bash
 cd ~/hackathon/mobile-robotics-hackathon-crazyflie/ros2_ws
@@ -17,17 +17,17 @@ cd ..
 .venv-cf2/bin/python scripts/cf2_live_map.py --ros
 ```
 
-Abrir en el navegador de Windows o Ubuntu **http://localhost:8765**. Mantener
-esta terminal abierta. Sin `--ros`, el navegador funciona sin cargar ROS.
-El proceso no tiene conexión radio ni capacidad para mandar órdenes al dron.
+Open **http://localhost:8765** in the Windows or Ubuntu browser. Keep this terminal
+open. Without `--ros`, the browser works without loading ROS. The process has no radio
+connection and cannot send commands to the drone.
 
-## Terminal 2: vuelo y envío en vivo
+## Terminal 2: flight and live streaming
 
-Cerrar cfclient y cualquier servidor que use la misma radio. Preparar zona
-despejada, obstáculos fuera de la trayectoria y una superficie texturada.
-El recorrido es abierto: no hay evitación de obstáculos ni cortes automáticos
-en el script, por solicitud del operador. El aterrizaje anterior tuvo incidentes
-cuya causa no se determinó; contar con el mentor durante la ejecución.
+Close cfclient and any server that uses the same radio. Prepare a clear area, obstacles
+outside the trajectory and a textured surface. The flight is open loop: the script has no
+obstacle avoidance and no automatic cut-offs, at the operator's request. The previous
+landing had incidents whose cause was not determined; have the mentor present during
+the run.
 
 ```bash
 cd ~/hackathon/mobile-robotics-hackathon-crazyflie
@@ -37,70 +37,67 @@ cd ~/hackathon/mobile-robotics-hackathon-crazyflie
   --square-side 0.2 --live-map
 ```
 
-En un vuelo: ascenso, hover, cuatro tramos de 20 cm (frente → izquierda → atrás
-→ derecha), pausa de 1 s tras cada tramo y aterrizaje. Velocidad 0.1 m/s.
-Direcciones relativas al dron, sin giros de yaw programados. El cierre físico
-del cuadrado no está garantizado por la integración de velocidad.
-Como alternativa, `--forward 0.2 --live-map` conserva el recorrido frontal ya
-ensayado. No combinar `--forward` y `--square-side`.
+In one flight: climb, hover, four 20 cm legs (front → left → back → right), a 1 s pause
+after every leg and landing. Speed 0.1 m/s. Directions are relative to the drone, with no
+programmed yaw turns. Velocity integration does not guarantee that the square closes
+physically. Alternatively, `--forward 0.2 --live-map` keeps the already rehearsed forward
+flight. Do not combine `--forward` and `--square-side`.
 
-Para mayor cobertura, `--square-side 0.5` solicita lados de 50 cm.
-`--rectangle 0.5 0.3` solicita frente 50 cm → izquierda 30 cm → atrás 50 cm
-→ derecha 30 cm. No combinar rutas. Mantener toda la huella del recorrido
-despejada: sillas fuera del perímetro y margen para dimensiones del dron/deriva.
-Con retorno frontal de unos 60 cm en ensayos anteriores, no ejecutar avance
-de 50 cm desde la misma posición hacia esa silla; redistribuir antes el espacio.
+For more coverage, `--square-side 0.5` requests 50 cm sides. `--rectangle 0.5 0.3`
+requests front 50 cm → left 30 cm → back 50 cm → right 30 cm. Do not combine routes.
+Keep the whole footprint of the flight clear: chairs outside the perimeter and margin for
+the drone size/drift. With a front return of about 60 cm in previous rehearsals, do not
+fly 50 cm forward from the same position towards that chair; rearrange the space first.
 
-## Datos y visualización
+## Data and visualization
 
-- Telemetría a 10 Hz por UDP local (puerto 8766); navegador y ROS actualizan a 5 Hz.
-- Mapa de 8 × 8 m, celdas de 5 cm. Pose XY en metros, yaw en grados,
-  rangos originales en milímetros. Asociación de timestamps hasta 50 ms.
-- Solo integrar ventana aérea `hovering=true` y altura estimada de 0.2–0.4 m.
-  No usar muestras de suelo, reset inicial del EKF o aterrizaje para mapear.
-- Cada retorno lateral de 50–4000 mm marca libre hasta el obstáculo y ocupado
-  en el extremo. Rangos inválidos/32766 dejan espacio desconocido.
-- Observaciones pueden corregirse con nuevos rayos y expiran después de 120 s
-  por defecto (`--decay-seconds` permite cambiarlo):
-  es un mapa local temporal, no un mapa permanente ni SLAM.
-- Caja sostenida por una persona: representa un objeto móvil. Puede verse en
-  vivo, pero no valida posición de una pared fija. Usar paredes o cajas apoyadas
-  si se necesita validar el mapa estático. No exigir sostener un objeto inmóvil.
-- Nuevo vuelo tiene sesión y frame propios; no fusionar orígenes distintos.
-- Si la telemetría se detiene, la página lo indica. El dron no recibe órdenes
-  desde el mapa ni desde el navegador. Enter no es un paro de emergencia.
-- Cada vuelo conserva un JSONL en `data/runs/cf2_flight_<sesión>.jsonl`.
+- Telemetry at 10 Hz over local UDP (port 8766); the browser and ROS update at 5 Hz.
+- 8 × 8 m map, 5 cm cells. XY pose in metres, yaw in degrees, original ranges in
+  millimetres. Timestamp association up to 50 ms.
+- Only integrate the airborne window `hovering=true` and an estimated height of
+  0.2–0.4 m. Do not use ground samples, the initial EKF reset or the landing for mapping.
+- Every lateral return of 50–4000 mm marks free space up to the obstacle and occupied at
+  the end. Invalid ranges/32766 leave unknown space.
+- Observations can be corrected by new rays and expire after 120 s by default
+  (`--decay-seconds` changes it): it is a temporary local map, not a permanent map or SLAM.
+- A box held by a person represents a moving object. It can be seen live, but it does not
+  validate the position of a fixed wall. Use walls or boxes resting on the floor to validate
+  the static map. Do not require anyone to hold an object still.
+- A new flight has its own session and frame; do not merge different origins.
+- If the telemetry stops, the page shows it. The drone receives no commands from the map
+  nor from the browser. Enter is not an emergency stop.
+- Every flight keeps a JSONL in `data/runs/cf2_flight_<session>.jsonl`.
 
-## Interfaz para Persona 1 y 2
+## Interface for Persons 1 and 2
 
-Con `--ros`, publicar:
+With `--ros`, it publishes:
 
-| Topic | Tipo | Contenido |
+| Topic | Type | Content |
 |---|---|---|
-| `/cf2/map` | `nav_msgs/msg/OccupancyGrid` | -1 desconocido, 0 libre, 100 ocupado |
-| `/cf2/odom` | `nav_msgs/msg/Odometry` | Pose local con yaw; covarianza provisional, no la del EKF |
-| `/cf2/ranges` | `hackathon_interfaces/msg/MultiRange` | Seis rangos en metros; retorno inválido como NaN |
-| `/cf2/range/front`, `/left`, `/back`, `/right` | `sensor_msgs/msg/Range` | Solo retornos utilizables, en metros |
+| `/cf2/map` | `nav_msgs/msg/OccupancyGrid` | -1 unknown, 0 free, 100 occupied |
+| `/cf2/odom` | `nav_msgs/msg/Odometry` | Local pose with yaw; provisional covariance, not the EKF one |
+| `/cf2/ranges` | `hackathon_interfaces/msg/MultiRange` | Six ranges in metres; invalid return as NaN |
+| `/cf2/range/front`, `/left`, `/back`, `/right` | `sensor_msgs/msg/Range` | Only usable returns, in metres |
 
-Frame del mapa: `cf2_local_<sesión>`. Los frames de sensores son propios del
-dron; todavía no se publican sus transformaciones TF ni una transformación
-al frame Lighthouse de dron 1. Antes de usarlo para navegación compartida,
-alinear ambos frames y medir incertidumbre. Los rangos no válidos no publican
-una nueva muestra: los consumidores deben comprobar antigüedad.
-Topics son accesibles a otros nodos ROS del mismo entorno; comunicación entre
-laptops WSL/Ubuntu requiere comprobar descubrimiento DDS, red y ROS_DOMAIN_ID.
+Map frame: `cf2_local_<session>`. The sensor frames belong to the drone; their TF
+transforms and a transform to the Lighthouse frame of drone 1 are not published yet.
+Before using it for shared navigation, align both frames and measure the uncertainty
+(the offline route is `scripts/plan_shared_map.py`, see [the coverage demo](cf2_coverage_demo.md)).
+Invalid ranges do not publish a new sample: consumers must check the age.
+The topics are reachable by other ROS nodes in the same environment; communication
+between WSL/Ubuntu laptops requires checking DDS discovery, the network and ROS_DOMAIN_ID.
 
-Esta es la ruta de hardware de dron 2. `real.launch.py` pertenece al stack de
-Crazyswarm2 y no sustituye estos dos procesos. No arrancarlo simultáneamente
-contra la misma radio. Los TPs de planificación están integrados en la rama,
-pero todavía no mandan órdenes al script de recorrido. El mapa local no se
-debe renombrar a `map` de Lighthouse sin una transformación medida.
+This is the hardware route of drone 2. `real.launch.py` belongs to the Crazyswarm2 stack
+and does not replace these two processes. Do not start it at the same time against the
+same radio. The planning TPs are integrated in the branch, but they do not command the
+flight script yet. The local map must not be renamed to the Lighthouse `map` without a
+measured transform.
 
-La interfaz HTTP `GET http://localhost:8765/state` entrega el mismo mapa, pose,
-rangos, trayectoria, sesión, edad de datos y estadísticas en JSON. Se sirve
-solo en loopback; no está expuesta a otros equipos.
+The HTTP interface `GET http://localhost:8765/state` delivers the same map, pose, ranges,
+trajectory, session, data age and statistics as JSON. It is served only on loopback; it is
+not exposed to other machines.
 
-## Verificación sin vuelo
+## Verification without flight
 
 ```bash
 .venv-cf2/bin/python -m unittest discover -s scripts -p 'test_cf2_*.py' -v
@@ -108,5 +105,5 @@ solo en loopback; no está expuesta a otros equipos.
   --replay data/runs/cf2_flight_9de3a2898a4a.jsonl
 ```
 
-Replay reproduce datos grabados con su ritmo original, sin conexión radio.
-El indicador de antigüedad permite distinguir el fin de la reproducción.
+Replay reproduces recorded data at its original pace, without a radio connection.
+The age indicator shows when the replay has ended.

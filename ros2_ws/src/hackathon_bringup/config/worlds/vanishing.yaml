@@ -1,5 +1,5 @@
-# Obstáculo que bloquea la ruta y desaparece a los 10 s (T06).
-# Formato: simulation_adapter/world.py
+# Obstacle that blocks the route and disappears at 10 s (T06).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:

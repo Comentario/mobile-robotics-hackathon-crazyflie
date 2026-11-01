@@ -1,32 +1,32 @@
-# Runbook del evento — TP-42 E
+# Event runbook — TP-42 E
 
-Plantilla preparada el 8 de octubre de 2026. No certifica vuelo real. Usar una
-revisión común del repositorio y completar los datos del equipo entregado.
+Template prepared on 8 October 2026. It does not certify a real flight. Use a common
+revision of the repository and fill in the data of the delivered unit.
 
-## Responsables y archivos
+## Owners and files
 
-- Persona 1: configuración, launch, grabación y registro de cada ensayo.
-- Persona 2: frames, salud de localización, rangos y supervisor de seguridad.
-- Persona 3: misión, ruta directa, seguimiento y waypoints.
-- Operador de la prueba: una persona designada que conoce la parada disponible;
-  acordar con los mentores espacio de ensayo y procedimiento de emergencia.
+- Person 1: configuration, launch, recording and log of every rehearsal.
+- Person 2: frames, localization health, ranges and safety supervisor.
+- Person 3: mission, direct route, tracking and waypoints.
+- Test operator: one designated person who knows the available stop; agree with the
+  mentors on the rehearsal space and the emergency procedure.
 
-| Archivo | Uso | Confirmar antes de hardware |
+| File | Use | Confirm before hardware |
 |---|---|---|
-| `config/event.yaml` | Parámetros del stack | Robot, frames, límites, alturas, umbrales, velocidades, mapa y tolerancias |
-| `config/event_hardware.yaml` | Plantilla Crazyswarm2 | URI, robot/type, firmware, estimador, decks, logging y `enabled` |
-| `config/missions/event.yaml` | Waypoints en map | Origen/ejes, orden, alturas y recorrido dentro de geofence |
-| `config/frames.yaml` | TF de sensores | Offsets físicos; hoy son nominales |
+| `config/event.yaml` | Stack parameters | Robot, frames, limits, heights, thresholds, speeds, map and tolerances |
+| `config/event_hardware.yaml` | Crazyswarm2 template | URI, robot/type, firmware, estimator, decks, logging and `enabled` |
+| `config/missions/event.yaml` | Waypoints in map | Origin/axes, order, heights and route inside the geofence |
+| `config/frames.yaml` | Sensor TF | Physical offsets; today they are nominal |
 
-Las rutas config son relativas a `ros2_ws/src/hackathon_bringup`. Los valores
-numéricos actuales son de desarrollo. La URI pertenece a Crazyswarm2;
-`cf_adapter.robot_name` debe coincidir exactamente con la clave `robots`.
-El bloque `EVENT_TYPE_TODO` es una plantilla: sustituirlo por la configuración
-del equipo recibido. No configura Lighthouse/Flow ni reemplaza la calibración.
+The config paths are relative to `ros2_ws/src/hackathon_bringup`. The current numeric
+values are development values. The URI belongs to Crazyswarm2; `cf_adapter.robot_name`
+must exactly match the `robots` key. The `EVENT_TYPE_TODO` block is a template: replace it
+with the configuration of the received unit. It configures neither Lighthouse/Flow nor
+replaces the calibration.
 
-## 1. Preparación y comprobación sin hardware
+## 1. Preparation and check without hardware
 
-Desde la raíz, en cada terminal ROS:
+From the root, in every ROS terminal:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -35,9 +35,9 @@ source ros2_ws/install/setup.bash
 export ROS_DOMAIN_ID=92 ROS_LOCALHOST_ONLY=1
 ```
 
-El dominio 92 es un ejemplo para pruebas en un solo equipo. Para varios equipos,
-acordar el dominio y la configuración de red; `ROS_LOCALHOST_ONLY=1` impide
-comunicarse con otros equipos. No compartir un dominio con pruebas ajenas.
+Domain 92 is an example for tests on a single machine. For several machines, agree on the
+domain and the network configuration; `ROS_LOCALHOST_ONLY=1` prevents talking to other
+machines. Do not share a domain with other people's tests.
 
 ```bash
 /usr/bin/python3 scripts/verify_event_config.py
@@ -45,68 +45,68 @@ bash scripts/verify_tp10.sh
 /usr/bin/python3 scripts/verify_tp12.py
 ```
 
-La primera orden debe dar coherencia estática y listar los placeholders. Las
-pruebas automáticas no requieren radio. TP-12 prueba arranque/conexiones; T01/T02
-no cuentan como misión aprobada hasta que se integren navegación y safety.
+The first command must report static consistency and list the placeholders. The automatic
+tests do not require a radio. TP-12 tests start-up/connections; at the time of writing
+T01/T02 did not count as an approved mission until navigation and safety were integrated
+(they now pass end to end in simulation, see [simulations.md](simulations.md)).
 
-## 2. Al recibir el dron
+## 2. When the drone is received
 
-1. Confirmar URI, id/type del robot y revisión de firmware con los mentores.
-2. Verificar Crazyradio, permisos USB, batería y los decks realmente montados.
-   Crazyradio/Ubuntu nativo corresponden a TP-42 A/B; registrar pendientes.
-3. Confirmar cómo se obtiene XYZ/yaw: Lighthouse, Flow u otra fuente. Verificar
-   pose moviendo el dron manualmente, signos y unidades, sin ordenar despegue.
-4. Confirmar frame global, origen, orientación y límites del espacio real.
-   `source_frame` y `map_frame` deben compartir origen/ejes: el adapter no hace
-   una calibración entre ellos. Los límites incluyen suelo Z=0 para aterrizar.
-5. Verificar cinco rayos del Multi-ranger y ToF inferior si están disponibles.
-   Para logging vertical, comprobar `range.up`/`range.zrange` en el firmware,
-   activar el bloque comentado y configurar el topic real en `event.yaml`.
-   Sin logging vertical el adapter publica NaN; no interpretar NaN como espacio libre.
-6. Ejecutar primero el procedimiento/ejemplo oficial que indiquen los mentores.
-   La presencia de un endpoint no prueba su efecto (ver TP-08).
+1. Confirm the URI, robot id/type and firmware revision with the mentors.
+2. Check the Crazyradio, USB permissions, battery and the decks actually mounted.
+   Crazyradio/native Ubuntu belong to TP-42 A/B; record anything pending.
+3. Confirm how XYZ/yaw is obtained: Lighthouse, Flow or another source. Verify the pose by
+   moving the drone by hand, signs and units, without commanding a takeoff.
+4. Confirm the global frame, origin, orientation and limits of the real space.
+   `source_frame` and `map_frame` must share origin/axes: the adapter does not calibrate
+   between them. The limits include the floor Z=0 for landing.
+5. Verify the five Multi-ranger rays and the bottom ToF if available.
+   For vertical logging, check `range.up`/`range.zrange` in the firmware, enable the
+   commented block and configure the real topic in `event.yaml`.
+   Without vertical logging the adapter publishes NaN; do not interpret NaN as free space.
+6. First run the official procedure/example indicated by the mentors.
+   The presence of an endpoint does not prove its effect (see TP-08).
 
-Actualizar los tres YAML, offsets de sensores y configuración del estimador
-entregada. Mantener `mission_manager.autostart=false`. Ajustar el envelope y
-velocidades conjuntamente con personas 2/3; no desactivar rangos requeridos para
-ocultar una integración incompleta.
+Update the three YAML files, the sensor offsets and the delivered estimator configuration.
+Keep `mission_manager.autostart=false`. Tune the envelope and the speeds together with
+persons 2/3; do not disable the required ranges to hide an incomplete integration.
 
 ```bash
 /usr/bin/python3 scripts/verify_event_config.py --ready
 ```
 
-Debe terminar con código 0 y sin placeholders. Esto verifica archivos, no la
-calibración ni el comportamiento de firmware. Registrar la revisión de Git y
-los valores confirmados; los waypoints de ejemplo aún necesitan aprobación.
+It must exit with code 0 and without placeholders. This checks files, not the calibration
+nor the firmware behaviour. Record the Git revision and the confirmed values; the example
+waypoints still need approval.
 
-## 3. Arranque del equipo y del stack
+## 3. Starting the unit and the stack
 
-En dos terminales, con ROS cargado y el mismo dominio:
+In two terminals, with ROS sourced and the same domain:
 
 ```bash
-# Terminal A: servidor externo. Ejecutar solo tras completar event_hardware.yaml.
+# Terminal A: external server. Run it only after completing event_hardware.yaml.
 EVENT_CONFIG="$PWD/ros2_ws/src/hackathon_bringup/config"
 ros2 launch crazyflie launch.py backend:=cflib \
   crazyflies_yaml_file:="$EVENT_CONFIG/event_hardware.yaml" \
   teleop:=False mocap:=False rviz:=False
 ```
 
-Este ejemplo usa el backend cflib instalado y no mocap externo. Si los mentores
-requieren mocap, otro backend o configuración de servidor/estimador, usar su
-procedimiento. No modificar parámetros de firmware a ciegas.
+This example uses the installed cflib backend and no external mocap. If the mentors
+require mocap, another backend or a server/estimator configuration, use their procedure.
+Do not change firmware parameters blindly.
 
 ```bash
-# Terminal B: stack propio, sin iniciar misión automáticamente.
+# Terminal B: our stack, without starting the mission automatically.
 EVENT_CONFIG="$PWD/ros2_ws/src/hackathon_bringup/config"
 ros2 launch hackathon_bringup real.launch.py \
   params:="$EVENT_CONFIG/event.yaml" \
   mission:="$EVENT_CONFIG/missions/event.yaml"
 ```
 
-`event.launch.py` de un solo comando corresponde a TP-42 D y está pendiente.
-No arrancar `simulation_adapter` y `cf_adapter` juntos en el mismo dominio.
+A single-command `event.launch.py` belongs to TP-42 D and is pending.
+Do not start `simulation_adapter` and `cf_adapter` together in the same domain.
 
-## 4. Comprobaciones antes de iniciar misión
+## 4. Checks before starting the mission
 
 ```bash
 ros2 node list
@@ -118,59 +118,58 @@ ros2 topic info /hk/cmd/safe --verbose
 ros2 service list
 ```
 
-Confirmar timestamps recientes, XYZ/yaw coherentes y tasas suficientes para los
-timeouts configurados; si un echo espera indefinidamente, cancelar y resolver
-el origen. Salud GOOD, supervisor sin fallo, rangos válidos requeridos y un
-único publisher de `/hk/cmd/safe`: `safety_supervisor`. Confirmar las conexiones
+Confirm recent timestamps, consistent XYZ/yaw and rates sufficient for the configured
+timeouts; if an echo waits forever, cancel it and fix the source. Health GOOD, supervisor
+without fault, required ranges valid and a single publisher of `/hk/cmd/safe`:
+`safety_supervisor`. Confirm the connections
 `/hk/goal → /hk/path → /hk/path/processed → /hk/cmd/nav → /hk/cmd/safe`.
-Servicios takeoff/land/emergency y mission/start/abort disponibles. No publicar
-comandos sintéticos directamente a `/hk/cmd/safe` en hardware.
+takeoff/land/emergency and mission/start/abort services available. Do not publish
+synthetic commands directly to `/hk/cmd/safe` on hardware.
 
-Si faltan nodos de los colegas o entradas, no iniciar misión. La simulación no
-verifica el watchdog de firmware ni el funcionamiento real de emergency.
+If colleagues' nodes or inputs are missing, do not start the mission. The simulation
+verifies neither the firmware watchdog nor the real behaviour of emergency.
 
-## 5. Ensayos y registro
+## 5. Rehearsals and logging
 
-Comprobar en simulación primero: un waypoint (T01), varios (T02), y después
-obstáculos/fallos cuando estén implementados sus TP. Un launch sin errores no
-es evidencia de llegada a waypoints ni de evitación.
+Check in simulation first: one waypoint (T01), several (T02), and then obstacles/faults
+once their TPs are implemented. A launch without errors is no evidence of reaching
+waypoints nor of avoidance.
 
-En hardware, avanzar por etapas según el procedimiento de mentores: despegue y
-hover, T01, T02, obstáculo estático, replanning y dinámicos solo si esas capacidades
-están implementadas y verificadas. Repetir una etapa fallida antes de ampliar.
+On hardware, advance in stages following the mentors' procedure: takeoff and hover, T01,
+T02, static obstacle, replanning and dynamic obstacles only if those capabilities are
+implemented and verified. Repeat a failed stage before going further.
 
 ```bash
-# Terminal C: iniciar antes del ensayo; finalizar con Ctrl+C después de aterrizar.
-bash scripts/record_bag.sh T01_evento
-# Terminal de operador: iniciar misión solo después de las comprobaciones anteriores.
+# Terminal C: start before the rehearsal; stop with Ctrl+C after landing.
+bash scripts/record_bag.sh T01_event
+# Operator terminal: start the mission only after the previous checks.
 ros2 service call /hk/mission/start std_srvs/srv/Trigger '{}'
 ros2 topic echo /hk/mission_status
 ```
 
-`success=true` en takeoff/land confirma aceptación, no fin de maniobra; comprobar
-altura y contacto con suelo. Registrar ensayo, commit, robot/firmware, YAML usados,
-resultado, tiempo, intervención y ruta del bag. Copiar bags y configuración a
-almacenamiento persistente; `/tmp/hk_runs` no es archivo definitivo.
+`success=true` in takeoff/land confirms acceptance, not the end of the manoeuvre; check the
+height and the ground contact. Record rehearsal, commit, robot/firmware, YAML files used,
+result, time, intervention and bag path. Copy bags and configuration to persistent storage;
+`/tmp/hk_runs` is not a final archive.
 
-## 6. Parada y recuperación
+## 6. Stop and recovery
 
-- Abort de misión: `/hk/mission/abort` pide terminar/aterrizar según su lógica.
-  Si no responde, usar el procedimiento de parada acordado con los mentores.
-- Aterrizaje directo disponible: `/hk/land`; confirmar descenso y suelo.
-- `/hk/emergency` es una última medida de corte, puede causar caída; su efecto
-  depende del backend/firmware. En nuestro simulador queda enclavada hasta reiniciar.
-- Ctrl+C del launch cierra todos los nodos; no es una orden de aterrizaje.
-  Aterrizar y verificar primero, cerrar bag, stack y servidor después.
+- Mission abort: `/hk/mission/abort` requests to finish/land according to its logic.
+  If it does not respond, use the stop procedure agreed with the mentors.
+- Direct landing available: `/hk/land`; confirm the descent and the ground.
+- `/hk/emergency` is a last-resort cut-off and may cause a fall; its effect depends on the
+  backend/firmware. In our simulator it stays latched until restart.
+- Ctrl+C on the launch closes all nodes; it is not a landing command.
+  Land and verify first, then close the bag, the stack and the server.
 
 ```bash
 ros2 service call /hk/mission/abort std_srvs/srv/Trigger '{}'
-# Si corresponde solicitar aterrizaje al adapter:
+# If a landing request to the adapter is appropriate:
 ros2 service call /hk/land hackathon_interfaces/srv/Land '{duration: 2.0}'
 ```
 
-Ante pose perdida, rangos inválidos, comandos vencidos o errores de radio:
-detener el ensayo con el procedimiento probado, guardar logs, corregir la causa
-y volver a las comprobaciones previas. No asumir hover por silencio del stream.
-Antes del siguiente ensayo, verificar batería, estado del estimador y que no
-queden otros publishers/adapters. Congelar los YAML de la configuración que
-pasó las pruebas; registrar cualquier ajuste posterior.
+On a lost pose, invalid ranges, stale commands or radio errors: stop the rehearsal with the
+tested procedure, save the logs, fix the cause and go back to the previous checks. Do not
+assume hover because the stream went silent. Before the next rehearsal, check the battery,
+the estimator state and that no other publishers/adapters are left. Freeze the YAML files of
+the configuration that passed the tests; record any later adjustment.

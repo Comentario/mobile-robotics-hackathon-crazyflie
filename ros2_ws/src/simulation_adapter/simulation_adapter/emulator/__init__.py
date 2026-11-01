@@ -1,1 +1,1 @@
-"""Backend cinemático de persona 2, separado del simulador de main."""
+"""Kinematic backend of person 2, separate from the main simulator."""

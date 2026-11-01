@@ -1,22 +1,22 @@
-"""Mundo 2.5D del simulador: obstáculos y raycast de los rangers (TP-10).
+"""2.5D simulator world: obstacles and ranger raycasts (TP-10).
 
-Formato de config/worlds/*.yaml:
-  bounds: [x_min, y_min, x_max, y_max]   # paredes de la sala
+Format of config/worlds/*.yaml:
+  bounds: [x_min, y_min, x_max, y_max]   # room walls
   ceiling: 2.0                           # m
   obstacles:
     - {type: box, center: [x, y], size: [sx, sy]}
     - {type: box, center: [x, y], size: [sx, sy], height: 1.0,
-       velocity: [vx, vy], t_start: 5.0, t_end: 20.0}   # dinámico y/o temporal
+       velocity: [vx, vy], t_start: 5.0, t_end: 20.0}   # moving and/or temporary
 
-Lógica pura (regla 6 de interfaces.md): sin rclpy, se prueba con pytest.
+Pure logic (rule 6 of interfaces.md): no rclpy, tested with pytest.
 
-"2.5D" significa: el plano XY tiene paredes y cajas; cada caja es un prisma
-vertical que va del suelo (z = 0) hasta 'height' (infinito si no se indica).
-Además hay suelo (z = 0) y techo (z = ceiling).
+"2.5D" means: the XY plane has walls and boxes; every box is a vertical prism
+from the ground (z = 0) up to 'height' (infinite if not given).
+There is also a floor (z = 0) and a ceiling (z = ceiling).
 
-raycast: se "lanza" un rayo desde el sensor y se calcula a qué distancia choca con
-lo primero que encuentra (pared, techo, suelo o caja). Es lo que mide un sensor
-láser real como los del Multi-ranger.
+raycast: a ray is "cast" from the sensor and the distance to the first thing it
+hits (wall, ceiling, floor or box) is computed. That is what a real laser sensor
+like the Multi-ranger ones measures.
 """
 from dataclasses import dataclass, field
 import math
@@ -32,17 +32,17 @@ class Box:
     t_end: float = math.inf
 
     def active(self, t):
-        """True si el obstáculo existe en el instante t."""
+        """True if the obstacle exists at time t."""
         return self.t_start <= t <= self.t_end
 
     def center_at(self, t):
-        """Centro del obstáculo en t (movimiento lineal desde t_start)."""
+        """Obstacle centre at t (linear motion from t_start)."""
         elapsed = max(0.0, t - self.t_start)
         return (self.center[0] + self.velocity[0] * elapsed,
                 self.center[1] + self.velocity[1] * elapsed)
 
     def bounds_at(self, t):
-        """Caja 3D en t: ((x_min, y_min, z_min), (x_max, y_max, z_max))."""
+        """3D box at t: ((x_min, y_min, z_min), (x_max, y_max, z_max))."""
         cx, cy = self.center_at(t)
         hx, hy = self.size[0] / 2.0, self.size[1] / 2.0
         return (cx - hx, cy - hy, 0.0), (cx + hx, cy + hy, self.height)
@@ -58,12 +58,12 @@ class World:
 
     @classmethod
     def from_dict(cls, data):
-        """Construye el mundo desde el YAML ya cargado."""
+        """Build the world from the already loaded YAML."""
         data = data or {}
         obstacles = []
         for obstacle in data.get('obstacles', []) or []:
             if obstacle.get('type', 'box') != 'box':
-                raise ValueError(f'Tipo de obstáculo no soportado: {obstacle.get("type")}')
+                raise ValueError(f'Unsupported obstacle type: {obstacle.get("type")}')
             obstacles.append(Box(
                 center=tuple(obstacle['center']),
                 size=tuple(obstacle['size']),
@@ -79,21 +79,21 @@ class World:
 
     @classmethod
     def empty(cls):
-        """Mundo sin paredes ni techo (si no se indica world_file)."""
+        """World without walls or ceiling (when no world_file is given)."""
         return cls(bounds=(-math.inf, -math.inf, math.inf, math.inf), ceiling=math.inf)
 
     def raycast(self, origin, direction, max_range, t):
-        """Distancia desde origin (x, y, z) en direction (unitario) al primer impacto.
+        """Distance from origin (x, y, z) along direction (unit) to the first hit.
 
-        Devuelve math.inf si no hay impacto dentro de max_range (convención REP-117).
-        Considera paredes (bounds), techo, suelo y obstáculos activos en t.
+        Returns math.inf if there is no hit within max_range (REP-117 convention).
+        Considers walls (bounds), ceiling, floor and obstacles active at t.
         """
         x, y, z = origin
         dx, dy, dz = direction
         x_min, y_min, x_max, y_max = self.bounds
         hits = []
 
-        # Paredes de la sala (el dron está dentro): plano que el rayo alcanza delante.
+        # Room walls (the drone is inside): plane the ray reaches ahead.
         if dx > 0:
             hits.append((x_max - x) / dx)
         elif dx < 0:
@@ -103,13 +103,13 @@ class World:
         elif dy < 0:
             hits.append((y_min - y) / dy)
 
-        # Techo y suelo.
+        # Ceiling and floor.
         if dz > 0:
             hits.append((self.ceiling - z) / dz)
         elif dz < 0:
             hits.append((0.0 - z) / dz)
 
-        # Cajas activas (método de "slabs": intersección con las 3 franjas del prisma).
+        # Active boxes ("slabs" method: intersection with the 3 slabs of the prism).
         for box in self.obstacles:
             if box.active(t):
                 d = _ray_box(origin, direction, *box.bounds_at(t))
@@ -121,10 +121,10 @@ class World:
         return distance if distance <= max_range else math.inf
 
     def collides(self, position, radius, t):
-        """True si una esfera de radio `radius` en `position` toca algo. Cuenta colisiones.
+        """True if a sphere of radius `radius` at `position` touches something. Counts collisions.
 
-        Cuenta una colisión nueva cada vez que se pasa de "no toca" a "toca".
-        El suelo no cuenta (el dron despega y aterriza en él).
+        A new collision is counted every time it goes from "not touching" to "touching".
+        The floor does not count (the drone takes off and lands on it).
         """
         x, y, z = position
         x_min, y_min, x_max, y_max = self.bounds
@@ -146,12 +146,12 @@ class World:
 
 
 def _ray_box(origin, direction, lower, upper):
-    """Distancia a la que el rayo entra en la caja [lower, upper], o None si no la toca."""
+    """Distance at which the ray enters the box [lower, upper], or None if it misses it."""
     t_near, t_far = -math.inf, math.inf
     for o, d, lo, hi in zip(origin, direction, lower, upper):
         if abs(d) < 1e-12:
             if o < lo or o > hi:
-                return None        # paralelo y fuera de la franja
+                return None        # parallel and outside the slab
             continue
         t1, t2 = (lo - o) / d, (hi - o) / d
         if t1 > t2:
@@ -160,11 +160,11 @@ def _ray_box(origin, direction, lower, upper):
         if t_near > t_far:
             return None
     if t_far < 0:
-        return None                # la caja está detrás
-    return max(t_near, 0.0)        # 0 si el origen está dentro
+        return None                # the box is behind
+    return max(t_near, 0.0)        # 0 if the origin is inside
 
 
 def _distance_to_box(point, lower, upper):
-    """Distancia euclídea de un punto a una caja (0 si está dentro)."""
+    """Euclidean distance from a point to a box (0 if inside)."""
     return math.sqrt(sum(max(lo - p, 0.0, p - hi) ** 2
                          for p, lo, hi in zip(point, lower, upper)))

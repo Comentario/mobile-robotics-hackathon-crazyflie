@@ -1,53 +1,53 @@
-"""Safety Supervisor: único nodo que publica comandos hacia el adapter (TP-37 a TP-39).
+"""Safety Supervisor: the only node that publishes commands towards the adapter (TP-37 to TP-39).
 
-Estados: NORMAL, SLOW, HOVER, LAND, ABORT. Prioridad sobre misión y navegación.
+States: NORMAL, SLOW, HOVER, LAND, ABORT. Takes priority over mission and navigation.
 
-Suscribe:
+Subscribes:
   /hk/cmd/nav               hackathon_interfaces/Setpoint
   /hk/state                 nav_msgs/Odometry
   /hk/ranges                hackathon_interfaces/MultiRange
   /hk/ranges/closing_rate   hackathon_interfaces/MultiRange
   /hk/localization_health   hackathon_interfaces/LocalizationHealth
   /hk/planner_status        hackathon_interfaces/PlannerStatus
-Publica:
-  /hk/cmd/safe              hackathon_interfaces/Setpoint   comando filtrado (o hover)
+Publishes:
+  /hk/cmd/safe              hackathon_interfaces/Setpoint   filtered command (or hover)
   /hk/safety_state          hackathon_interfaces/SafetyState
-Clientes de servicio:
+Service clients:
   /hk/land, /hk/emergency
-Parámetros:
+Parameters:
   state_timeout, range_timeout, command_timeout, ranges_required, critical_distance,
   ttc_threshold, z_min, z_max, geofence, lost_policy, hover_timeout
 
-Lógica: supervisor.py (máquina de estados), watchdog.py, geofence.py.
+Logic: supervisor.py (state machine), watchdog.py, geofence.py.
 
-Cómo funciona el nodo
----------------------
-  1. Cada mensaje que llega (estado, rangos, salud, comandos) actualiza los datos
-     guardados y "da de comer" a su watchdog.
-  2. Un temporizador a SAFETY_RATE Hz evalúa la máquina de estados, publica
-     /hk/safety_state y, al ENTRAR en LAND o ABORT, llama una vez a /hk/land o
-     /hk/emergency.
-  3. Cada comando de /hk/cmd/nav se filtra según el estado actual y se publica en
-     /hk/cmd/safe. Si el navegador deja de publicar, el supervisor tampoco publica:
-     el watchdog del adapter/firmware mantiene el hover, y este nodo pasa a HOVER
-     (y a LAND tras hover_timeout si el dron está en el aire).
+How the node works
+------------------
+  1. Every incoming message (state, ranges, health, commands) updates the stored
+     data and "feeds" its watchdog.
+  2. A timer at SAFETY_RATE Hz evaluates the state machine, publishes
+     /hk/safety_state and, when ENTERING LAND or ABORT, calls /hk/land or
+     /hk/emergency once.
+  3. Every /hk/cmd/nav command is filtered according to the current state and
+     published on /hk/cmd/safe. If the navigator stops publishing, the supervisor
+     does not publish either: the adapter/firmware watchdog keeps the hover, and
+     this node moves to HOVER (and to LAND after hover_timeout if airborne).
 
-Streaming de HOVER (necesario con el dron real)
------------------------------------------------
-  El firmware real apaga los motores si deja de recibir setpoints de bajo nivel
-  (crazyflie-firmware 2025.02, supervisor.c: 0.5 s -> nivela y deriva; 2 s ->
-  motores fuera). Por eso, con el dron en el aire y tras haber recibido alguna
-  orden del navegador, este nodo publica él mismo un Setpoint HOVER a SAFETY_RATE Hz:
-    - siempre que el estado sea HOVER (reacción inmediata, sin esperar al
-      siguiente mensaje del navegador), y
-    - en NORMAL/SLOW si el navegador lleva más de KEEPALIVE_AGE s callado
-      (antes de los 0.5 s del firmware).
+HOVER streaming (required with the real drone)
+----------------------------------------------
+  The real firmware cuts the motors if it stops receiving low-level setpoints
+  (crazyflie-firmware 2025.02, supervisor.c: 0.5 s -> levels out and drifts; 2 s ->
+  motors off). That is why, with the drone airborne and after some navigator command
+  has been received, this node publishes a HOVER Setpoint itself at SAFETY_RATE Hz:
+    - whenever the state is HOVER (immediate reaction, without waiting for the
+      next navigator message), and
+    - in NORMAL/SLOW if the navigator has been silent for more than KEEPALIVE_AGE s
+      (before the firmware's 0.5 s).
 
 TTC (TP-36)
 -----------
-  min_ttc = menor TTC de los 4 sensores horizontales, con la distancia de /hk/ranges
-  y el d_dot de /hk/ranges/closing_rate (negativo = se acerca; NaN = no disponible).
-  Si min_ttc < ttc_threshold -> SLOW.
+  min_ttc = lowest TTC of the 4 horizontal sensors, using the distance from /hk/ranges
+  and the d_dot from /hk/ranges/closing_rate (negative = approaching; NaN = unavailable).
+  If min_ttc < ttc_threshold -> SLOW.
 """
 import math
 
@@ -70,8 +70,8 @@ from .watchdog import StreamWatchdog
 
 
 def time_to_collision(distance, closing_rate):
-    """Igual que range_processor/range_filter.py (copiado para no crear una
-    dependencia entre paquetes). TTC = distance / -d_dot si se acerca; inf si no."""
+    """Same as range_processor/range_filter.py (copied to avoid a dependency between
+    packages). TTC = distance / -d_dot when approaching; inf otherwise."""
     if closing_rate is None or not math.isfinite(closing_rate) or closing_rate >= 0.0:
         return math.inf
     if math.isnan(distance) or distance == math.inf:
@@ -81,10 +81,10 @@ def time_to_collision(distance, closing_rate):
     return distance / -closing_rate
 
 
-SAFETY_RATE = 20.0       # Hz a los que se evalúa y publica el estado de seguridad
-KEEPALIVE_AGE = 0.25     # s sin /hk/cmd/nav antes de mandar HOVER (firmware: 0.5 s)
-GEOFENCE_MARGIN = 0.1    # m de tolerancia antes de considerar al dron FUERA de la geofence
-LAND_DURATION = 2.0      # s del aterrizaje pedido por seguridad
+SAFETY_RATE = 20.0       # Hz at which the safety state is evaluated and published
+KEEPALIVE_AGE = 0.25     # s without /hk/cmd/nav before sending HOVER (firmware: 0.5 s)
+GEOFENCE_MARGIN = 0.1    # m of tolerance before the drone counts as OUTSIDE the geofence
+LAND_DURATION = 2.0      # s of the landing requested by safety
 
 
 class SafetySupervisorNode(Node):
@@ -92,7 +92,7 @@ class SafetySupervisorNode(Node):
     def __init__(self):
         super().__init__('safety_supervisor')
 
-        # --- Parámetros (valores en simulation.yaml) ---------------------------
+        # --- Parameters (values in simulation.yaml) ----------------------------
         p = self.declare_parameter
         state_timeout = p('state_timeout', 0.3).value
         range_timeout = p('range_timeout', 0.3).value
@@ -115,7 +115,7 @@ class SafetySupervisorNode(Node):
             reaction_time=p('reaction_time', 0.3).value,
         )
 
-        # --- Lógica pura --------------------------------------------------------
+        # --- Pure logic ---------------------------------------------------------
         self.supervisor = SafetySupervisor(config)
         self.geofence = Geofence(*fence)
         self.health_wd = StreamWatchdog(state_timeout)
@@ -123,12 +123,12 @@ class SafetySupervisorNode(Node):
         self.range_wd = StreamWatchdog(range_timeout)
         self.cmd_wd = StreamWatchdog(command_timeout)
 
-        # --- Últimos datos recibidos -------------------------------------------
-        self.position = None                    # (x, y, z) del dron
+        # --- Latest received data ----------------------------------------------
+        self.position = None                    # (x, y, z) of the drone
         self.localization = LocalizationHealth.LOST
         self.min_range = math.inf
-        self.horizontal = {}                    # sensor -> distancia filtrada
-        self.rates = {}                         # sensor -> d_dot (m/s) o None
+        self.horizontal = {}                    # sensor -> filtered distance
+        self.rates = {}                         # sensor -> d_dot (m/s) or None
         self.min_ttc = math.inf
         self.ranges_valid = False
         self.rate_stamp = None
@@ -152,14 +152,14 @@ class SafetySupervisorNode(Node):
         self.create_subscription(
             PlannerStatus, '/hk/planner_status', self._on_planner, 10)
 
-        # --- Clientes de servicio -----------------------------------------------
+        # --- Service clients ----------------------------------------------------
         self.land_client = self.create_client(Land, '/hk/land')
         self.emergency_client = self.create_client(Trigger, '/hk/emergency')
 
         self.create_timer(1.0 / SAFETY_RATE, self._evaluate)
 
         self.get_logger().info(
-            f'safety_supervisor listo: command_timeout={command_timeout} s, '
+            f'safety_supervisor ready: command_timeout={command_timeout} s, '
             f'hover_timeout={config.hover_timeout} s, lost_policy={config.lost_policy}, '
             f'ranges_required={config.ranges_required}, geofence={fence}, '
             f'z=[{self.z_min}, {self.z_max}]'
@@ -169,7 +169,7 @@ class SafetySupervisorNode(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     # ------------------------------------------------------------------
-    # Entradas
+    # Inputs
     # ------------------------------------------------------------------
     def _fresh(self, msg, timeout):
         age = self._now() - (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
@@ -190,7 +190,7 @@ class SafetySupervisorNode(Node):
         self.horizontal = {name: getattr(msg, name)
                            for name in ('front', 'back', 'left', 'right')}
         self.ranges_valid = all(not math.isnan(v) for v in self.horizontal.values())
-        # Holgura = rango - distancia de frenado hacia ese obstáculo (supervisor.py).
+        # Clearance = range - stopping distance towards that obstacle (supervisor.py).
         self.min_range = min(
             [effective_clearance(d, self.rates.get(name), self.supervisor.config)
              for name, d in self.horizontal.items()] or [math.inf]
@@ -219,7 +219,7 @@ class SafetySupervisorNode(Node):
         )
 
     def _on_nav(self, msg):
-        """Filtra el comando del navegador según el estado actual y lo publica."""
+        """Filter the navigator command according to the current state and publish it."""
         if msg.header.frame_id != self.map_frame or not self._fresh(msg, self.command_timeout):
             return
         if not all(math.isfinite(v) for v in (msg.position.x, msg.position.y, msg.position.z,
@@ -249,15 +249,15 @@ class SafetySupervisorNode(Node):
         self.cmd_pub.publish(safe)
 
     # ------------------------------------------------------------------
-    # Evaluación periódica
+    # Periodic evaluation
     # ------------------------------------------------------------------
     def _evaluate(self):
         now = self._now()
         z = self.position[2] if self.position else 0.0
 
-        # Dron en el suelo y sin órdenes: el navegador anterior ya no cuenta.
-        # El silencio vuelve a significar "la misión aún no empezó", y así el dron
-        # puede despegar de nuevo tras un aterrizaje de seguridad.
+        # Drone on the ground and without commands: the previous navigator no longer
+        # counts. Silence means "the mission has not started yet" again, so the drone
+        # can take off again after a safety landing.
         if z <= AIRBORNE_Z and self.cmd_wd.received_any() and self.cmd_wd.stale(now):
             self.cmd_wd.last_stamp = None
         if self.rate_stamp is None or now-self.rate_stamp > self.range_timeout:
@@ -270,8 +270,8 @@ class SafetySupervisorNode(Node):
             localization=LocalizationHealth.LOST if self.health_wd.stale(now) else self.localization,
             state_stale=self.state_wd.stale(now),
             ranges_stale=self.range_wd.stale(now) or not self.ranges_valid,
-            # Los comandos solo "vencen" si alguna vez llegaron: antes de la primera
-            # orden del navegador el dron está esperando, no ha perdido nada.
+            # Commands only "expire" if they ever arrived: before the first navigator
+            # command the drone is waiting, it has not lost anything.
             command_stale=self.cmd_wd.received_any() and self.cmd_wd.stale(now),
             min_horizontal_range=self.min_range if not self.range_wd.stale(now) else math.inf,
             min_ttc=self.min_ttc if not self.range_wd.stale(now) else math.inf,
@@ -284,7 +284,7 @@ class SafetySupervisorNode(Node):
         state, speed_scale, reason = self.supervisor.evaluate(inputs)
         self._speed_scale = speed_scale
 
-        # Mantener vivo el streaming de setpoints (ver docstring).
+        # Keep the setpoint streaming alive (see docstring).
         if (z > AIRBORNE_Z and self.position is not None and self.cmd_wd.received_any()
                 and state not in (LAND, ABORT)):
             nav_silent = now - self.cmd_wd.last_stamp > KEEPALIVE_AGE
@@ -301,7 +301,7 @@ class SafetySupervisorNode(Node):
         if state != self._last_state:
             previous = STATE_NAMES[self._last_state] if self._last_state is not None else '-'
             self.get_logger().warn(
-                f'Seguridad: {previous} -> {STATE_NAMES[state]} (reason="{reason}")'
+                f'Safety: {previous} -> {STATE_NAMES[state]} (reason="{reason}")'
             )
             if state == LAND:
                 self._call_land()
@@ -319,19 +319,19 @@ class SafetySupervisorNode(Node):
 
     def _call_land(self):
         if not self.land_client.service_is_ready():
-            self.get_logger().error('LAND pedido pero /hk/land no está disponible')
+            self.get_logger().error('LAND requested but /hk/land is not available')
             return
         request = Land.Request()
         request.duration = LAND_DURATION
         self.land_client.call_async(request)
-        self.get_logger().warn('Seguridad: aterrizaje solicitado por /hk/land')
+        self.get_logger().warn('Safety: landing requested through /hk/land')
 
     def _call_emergency(self):
         if not self.emergency_client.service_is_ready():
-            self.get_logger().error('ABORT pedido pero /hk/emergency no está disponible')
+            self.get_logger().error('ABORT requested but /hk/emergency is not available')
             return
         self.emergency_client.call_async(Trigger.Request())
-        self.get_logger().error('Seguridad: EMERGENCIA solicitada por /hk/emergency')
+        self.get_logger().error('Safety: EMERGENCY requested through /hk/emergency')
 
 
 def main(args=None):

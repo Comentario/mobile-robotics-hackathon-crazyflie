@@ -1,5 +1,5 @@
-# Obstáculo que avanza hacia el dron (T07).
-# Formato: simulation_adapter/world.py
+# Obstacle moving towards the drone (T07).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:

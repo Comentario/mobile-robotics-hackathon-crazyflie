@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Path follower por lookahead con evitación reactiva usando el Multi-ranger.',
+    description='Lookahead path follower with reactive avoidance using the Multi-ranger.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

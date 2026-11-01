@@ -1,45 +1,45 @@
-# Sensores e integración del MVP
+# MVP sensors and integration
 
-Se conserva la API de las ramas de persona 2:
+The API of the person 2 branches is kept:
 
-| Entrada de cf_adapter | Tipo | Convención |
+| cf_adapter input | Type | Convention |
 |---|---|---|
-| `/cf231/pose` | PoseStamped | pose en `world`, sello de la medida |
-| `/cf231/scan` | LaserScan | `[back, right, front, left]`, metros, ángulos −π + i·π/2 |
-| `/cf231/ranges_extra` | LogDataGeneric | `[up, down]`, milímetros |
+| `/cf231/pose` | PoseStamped | pose in `world`, measurement timestamp |
+| `/cf231/scan` | LaserScan | `[back, right, front, left]`, metres, angles −π + i·π/2 |
+| `/cf231/ranges_extra` | LogDataGeneric | `[up, down]`, millimetres |
 
-`cf_adapter` publica `/hk/adapter/odom` y `/hk/adapter/ranges`.
-`state_monitor` publica `/hk/state`, `/hk/localization_health` y TF `map → base_link`.
-`range_processor` publica `/hk/ranges` y `/hk/ranges/closing_rate`.
+`cf_adapter` publishes `/hk/adapter/odom` and `/hk/adapter/ranges`.
+`state_monitor` publishes `/hk/state`, `/hk/localization_health` and the TF `map → base_link`.
+`range_processor` publishes `/hk/ranges`, `/hk/ranges/closing_rate` and `/hk/ranges/markers`.
 
-## Dos formas de simular
+## Two ways to simulate
 
-- `backend:=emulator`: `sim_crazyflie` de persona 2 genera dinámica cinemática,
-  pose, raycast y fallos. Sus modelos se guardan en `simulation_adapter/emulator`
-  para conservar el TP-10 original. No ejecuta firmware real; su watchdog es una aproximación.
-- `backend:=sil`: el servidor externo de Crazyswarm2 genera movimiento y `/clock`.
-  `sim_sensors` lee TF `world → cf231`, añade ruido de pose y calcula rayos contra
-  el mundo del escenario. Considera orientación completa y offsets de sensores.
-  No genera movimiento, EKF ni flujo óptico. No implementa los fallos del emulador.
+- `backend:=emulator`: the person 2 `sim_crazyflie` generates kinematic dynamics,
+  pose, raycasts and faults. Its models live in `simulation_adapter/emulator` to keep
+  the original TP-10. It does not run real firmware; its watchdog is an approximation.
+- `backend:=sil`: the external Crazyswarm2 server generates the motion and `/clock`.
+  `sim_sensors` reads the TF `world → cf231`, adds pose noise and computes rays against
+  the scenario world. It takes the full orientation and the sensor offsets into account.
+  It generates no motion, EKF or optical flow, and does not implement the emulator faults.
 
-El scan recorta a 3.49 m. `+inf` significa sin retorno, `-inf` demasiado cerca,
-`NaN` inválido. `-inf` atraviesa el filtro inmediatamente; no se espera confirmación
-ni mediana. NaN puede conservar el último valor durante `invalid_hold` (0.3 s).
-Después, un horizontal inválido causa HOVER si `ranges_required` está activo.
-Los rayos individuales no modelan el cono óptico ni materiales.
+The scan is clipped at 3.49 m. `+inf` means no return, `-inf` too close, `NaN` invalid.
+`-inf` passes through the filter immediately; no confirmation or median is awaited.
+NaN may hold the last value for `invalid_hold` (0.3 s). After that, an invalid
+horizontal ray causes HOVER if `ranges_required` is enabled.
+Individual rays model neither the optical cone nor materials.
 
-Los rates usan la variación de distancia filtrada: negativos indican acercamiento.
-El navegador mantiene el yaw para evitar que un giro aparente una velocidad de cierre.
-Seguridad considera TTC y frenado (`max_decel` por defecto 0.5 m/s²,
-`reaction_time` 0.3 s); estos valores necesitan ajuste y prueba en hardware.
+The rates use the change of the filtered distance: negative values mean approaching.
+The navigator holds the yaw (`face_target: false`, the default) so that a turn does not
+look like a closing speed. Safety considers TTC and braking (`max_decel` 0.5 m/s² by
+default, `reaction_time` 0.3 s); these values need tuning and testing on hardware.
 
-## Paso a hardware
+## Moving to hardware
 
-Sustituir el simulador y `sim_sensors` por el servidor de hardware, configurar logging
-`pose`, `scan` y el custom topic `ranges_extra` con variables `[range.up, range.zrange]`.
-Verificar orden, unidades, timestamps, frames, retorno inválido y frecuencia reales.
-No cambiar los tópicos del equipo. Consultar `command_interface.md`: los servicios
-emergency y notify del SIL instalado no demuestran soporte funcional en hardware.
+Replace the simulator and `sim_sensors` with the hardware server, and configure logging of
+`pose`, `scan` and the custom topic `ranges_extra` with the variables `[range.up, range.zrange]`.
+Verify the real order, units, timestamps, frames, invalid return and rate.
+Do not change the team topics. See [crazyflie_command_interface.md](crazyflie_command_interface.md):
+the emergency and notify services of the installed SIL do not prove functional support on hardware.
 
-La validación de integración y comandos para Ubuntu/ROS nativos se encuentran
-al final de `simulations.md`.
+The integration validation and the commands for native Ubuntu/ROS are at the end of
+[simulations.md](simulations.md).

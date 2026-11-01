@@ -1,7 +1,7 @@
-"""Multi-ranger sintético: offsets respecto a base_link, yaw y REP-117."""
+"""Synthetic Multi-ranger: offsets relative to base_link, yaw and REP-117."""
 import math
 
-# Misma geometría nominal que config/frames.yaml (TP-13 medirá el hardware).
+# Same nominal geometry as config/frames.yaml (TP-13 will measure the hardware).
 SENSORS = {
     'front': ((0.02, 0, 0.03), (1, 0, 0)),
     'back': ((-0.02, 0, 0.03), (-1, 0, 0)),
@@ -14,17 +14,17 @@ SENSORS = {
 
 def sample_ranges(world, state, t, range_min, range_max, noise_std=0.0, rng=None, orientation=None):
     if not (0 <= range_min < range_max) or not all(math.isfinite(v) for v in (range_min, range_max, noise_std)) or noise_std < 0:
-        raise ValueError('Límites/ruido de rangos inválidos')
+        raise ValueError('Invalid range limits/noise')
     if noise_std and rng is None:
-        raise ValueError('El ruido requiere un generador aleatorio')
+        raise ValueError('Noise requires a random generator')
     c, s = math.cos(state.yaw), math.sin(state.yaw)
     rotate = lambda v: (c*v[0]-s*v[1], s*v[0]+c*v[1], v[2])
     if orientation is not None:
         if len(orientation) != 4 or not all(math.isfinite(v) for v in orientation) or not math.isclose(math.hypot(*orientation),1,abs_tol=1e-6):
-            raise ValueError('Cuaternión unitario requerido')
+            raise ValueError('A unit quaternion is required')
         x,y,z,w = orientation
         def rotate(v):
-            # q*v*q^-1; incluye roll/pitch del SIL, sin reducirlos a yaw.
+            # q*v*q^-1; includes the SIL roll/pitch, without reducing them to yaw.
             tx,ty,tz = 2*(y*v[2]-z*v[1]),2*(z*v[0]-x*v[2]),2*(x*v[1]-y*v[0])
             return (v[0]+w*tx+y*tz-z*ty, v[1]+w*ty+z*tx-x*tz, v[2]+w*tz+x*ty-y*tx)
     result = {}

@@ -1,8 +1,8 @@
-"""Watchdogs de streams vencidos (TP-38): pose, rangos y bucle de comandos.
+"""Stale-stream watchdogs (TP-38): pose, ranges and command loop.
 
-Un watchdog es un "perro guardián": se le avisa cada vez que llega un mensaje
-(stamp) y responde si hace demasiado que no llega ninguno (stale).
-Lógica pura: sin rclpy. Los tiempos son segundos (float).
+A watchdog is told every time a message arrives (stamp) and answers whether too
+much time has passed since the last one (stale).
+Pure logic: no rclpy. Times are seconds (float).
 """
 
 
@@ -12,15 +12,15 @@ class StreamWatchdog:
         self.last_stamp = None
 
     def stamp(self, t):
-        """Registra que ha llegado un mensaje en el instante t."""
+        """Record that a message arrived at time t."""
         self.last_stamp = t
 
     def received_any(self):
-        """True si alguna vez llegó un mensaje."""
+        """True if a message ever arrived."""
         return self.last_stamp is not None
 
     def stale(self, now):
-        """True si nunca llegó un mensaje o el último tiene más de timeout s."""
+        """True if no message ever arrived or the last one is older than timeout s."""
         if self.last_stamp is None:
             return True
         return now - self.last_stamp > self.timeout

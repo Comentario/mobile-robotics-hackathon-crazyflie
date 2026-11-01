@@ -1,28 +1,28 @@
-"""Validación y filtrado de rangos (TP-19, TP-20) y tasa de cierre d_dot (TP-36).
+"""Range validation and filtering (TP-19, TP-20) and closing rate d_dot (TP-36).
 
-Convención REP-117 en toda la API: +inf sin retorno, -inf demasiado cerca, NaN inválido.
+REP-117 convention in the whole API: +inf no return, -inf too close, NaN invalid.
 
-Lógica pura (regla 6 de interfaces.md): sin rclpy, se prueba con pytest.
+Pure logic (rule 6 of interfaces.md): no rclpy, tested with pytest.
 
-Qué hace update() con cada sensor, en cada mensaje
--------------------------------------------------
-  1. Clasificar la lectura (classify):
-       NaN                    -> 'invalid'    (no se usa)
-       +inf o > range_max     -> 'no_return'  (nada delante, se trata como +inf)
-       -inf o < range_min     -> 'too_close'  (algo pegado, se trata como 0 m)
-       resto                  -> 'valid'
-  2. Rechazo de spikes: si la lectura salta más de max_valid_jump respecto al valor
-     aceptado, NO se cree enseguida. Se guarda como "candidata" y solo se acepta si
-     las lecturas siguientes la confirman durante spike_confirm_time segundos.
-     Un spike de 1-4 muestras (T08) se descarta; un obstáculo real se acepta
-     con un retraso de spike_confirm_time.
-  3. Mediana de las últimas filter_window lecturas aceptadas (quita ruido sin
-     añadir mucho retraso: con 3 muestras a 20 Hz son ~0,05 s).
-  4. Si el sensor da NaN más de invalid_hold segundos seguidos, la salida es NaN;
-     antes se mantiene el último valor filtrado.
+What update() does with every sensor, in every message
+------------------------------------------------------
+  1. Classify the reading (classify):
+       NaN                    -> 'invalid'    (not used)
+       +inf or > range_max    -> 'no_return'  (nothing ahead, treated as +inf)
+       -inf or < range_min    -> 'too_close'  (something touching, treated as 0 m)
+       otherwise              -> 'valid'
+  2. Spike rejection: if the reading jumps more than max_valid_jump from the accepted
+     value, it is NOT believed right away. It is stored as a "candidate" and only
+     accepted if the following readings confirm it for spike_confirm_time seconds.
+     A spike of 1-4 samples (T08) is discarded; a real obstacle is accepted with a
+     delay of spike_confirm_time.
+  3. Median of the last filter_window accepted readings (removes noise without
+     adding much delay: with 3 samples at 20 Hz it is ~0.05 s).
+  4. If the sensor gives NaN for more than invalid_hold consecutive seconds, the
+     output is NaN; before that, the last filtered value is held.
 
-closing_rate (d_dot): pendiente (regresión lineal) de la distancia filtrada en los
-últimos rate_window s. Negativo = el obstáculo se acerca.
+closing_rate (d_dot): slope (linear regression) of the filtered distance over the
+last rate_window s. Negative = the obstacle is approaching.
 """
 from collections import deque
 from dataclasses import dataclass
@@ -35,16 +35,16 @@ SENSORS = ('front', 'back', 'left', 'right', 'up', 'down')
 class RangeFilterConfig:
     range_min: float
     range_max: float
-    filter_window: int      # muestras para la mediana; pequeño para no añadir retraso
-    max_valid_jump: float   # m entre muestras; más grande se trata como spike
-    spike_confirm_time: float = 0.3   # s que un salto debe mantenerse para aceptarlo
-    invalid_hold: float = 0.3         # s que se mantiene el último valor si llega NaN
-    rate_window: float = 0.3          # s de historia para estimar d_dot
-    rate_min_samples: int = 3         # muestras mínimas para dar un d_dot
+    filter_window: int      # samples for the median; small so it adds little delay
+    max_valid_jump: float   # m between samples; larger is treated as a spike
+    spike_confirm_time: float = 0.3   # s a jump must persist to be accepted
+    invalid_hold: float = 0.3         # s the last value is held when NaN arrives
+    rate_window: float = 0.3          # s of history to estimate d_dot
+    rate_min_samples: int = 3         # minimum samples to provide a d_dot
 
 
 def classify(value, config):
-    """Devuelve 'valid', 'no_return', 'too_close' o 'invalid'."""
+    """Return 'valid', 'no_return', 'too_close' or 'invalid'."""
     if math.isnan(value):
         return 'invalid'
     if value == math.inf or value > config.range_max:
@@ -55,7 +55,7 @@ def classify(value, config):
 
 
 def _to_distance(value, kind):
-    """Lectura -> distancia interna: too_close = 0 m, no_return = +inf."""
+    """Reading -> internal distance: too_close = 0 m, no_return = +inf."""
     if kind == 'too_close':
         return 0.0
     if kind == 'no_return':
@@ -65,12 +65,12 @@ def _to_distance(value, kind):
 
 class _SensorState:
     def __init__(self, window):
-        self.accepted = deque(maxlen=window)   # distancias aceptadas (para la mediana)
-        self.reference = None                  # último valor aceptado (para detectar saltos)
-        self.candidate = None                  # (t_inicio, [valores]) de un salto sin confirmar
-        self.output = math.nan                 # último valor filtrado publicado
-        self.last_ok_t = None                  # hora de la última lectura no-NaN
-        self.history = deque()                 # (t, distancia filtrada) para d_dot
+        self.accepted = deque(maxlen=window)   # accepted distances (for the median)
+        self.reference = None                  # last accepted value (to detect jumps)
+        self.candidate = None                  # (t_start, [values]) of an unconfirmed jump
+        self.output = math.nan                 # last published filtered value
+        self.last_ok_t = None                  # time of the last non-NaN reading
+        self.history = deque()                 # (t, filtered distance) for d_dot
 
 
 class RangeFilter:
@@ -78,10 +78,10 @@ class RangeFilter:
     def __init__(self, config):
         self.config = config
         self._sensors = {name: _SensorState(max(1, config.filter_window)) for name in SENSORS}
-        self.rejected_spikes = 0               # contador, útil para logs y tests
+        self.rejected_spikes = 0               # counter, useful for logs and tests
 
     def update(self, t, raw):
-        """raw: dict sensor -> m. Devuelve dict sensor -> m filtrado (mismo formato)."""
+        """raw: dict sensor -> m. Returns a dict sensor -> filtered m (same format)."""
         out = {}
         for name in SENSORS:
             s = self._sensors[name]
@@ -89,7 +89,7 @@ class RangeFilter:
             kind = classify(value, self.config)
 
             if kind == 'invalid':
-                # Mantener el último valor un rato; después, NaN.
+                # Hold the last value for a while; then NaN.
                 if s.last_ok_t is None or t - s.last_ok_t > self.config.invalid_hold:
                     s.output = math.nan
                     s.history.clear()
@@ -115,7 +115,7 @@ class RangeFilter:
         return out
 
     def closing_rate(self, sensor):
-        """d_dot estimado del sensor en m/s, o None si no es estable."""
+        """Estimated sensor d_dot in m/s, or None if it is not stable."""
         history = self._sensors[sensor].history
         if len(history) < self.config.rate_min_samples:
             return None
@@ -130,15 +130,15 @@ class RangeFilter:
 
     # ------------------------------------------------------------------
     def _accept_or_hold(self, t, s, distance):
-        """Paso 2 del docstring: aceptar la lectura o tratarla como posible spike."""
+        """Step 2 of the docstring: accept the reading or treat it as a possible spike."""
         jump = self.config.max_valid_jump
-        # Para comparar, "sin retorno" (+inf) cuenta como range_max: pasar de 3.48 m
-        # a +inf es el obstáculo saliendo del alcance, no un spike (el LaserScan de
-        # Crazyswarm2 corta en 3.49 m y con ruido parpadea entre 3.48 y +inf).
+        # For comparison, "no return" (+inf) counts as range_max: going from 3.48 m to
+        # +inf is the obstacle leaving the range, not a spike (the Crazyswarm2
+        # LaserScan cuts at 3.49 m and with noise it flickers between 3.48 and +inf).
         cmp_now = min(distance, self.config.range_max)
         cmp_ref = None if s.reference is None else min(s.reference, self.config.range_max)
         if cmp_ref is None or abs(cmp_now - cmp_ref) <= jump:
-            # Lectura coherente con lo aceptado: se acepta y se olvida cualquier candidata.
+            # Reading consistent with the accepted value: accept it and forget any candidate.
             if s.candidate is not None:
                 self.rejected_spikes += 1
                 s.candidate = None
@@ -146,7 +146,7 @@ class RangeFilter:
             s.reference = distance
             return
 
-        # Salto grande. ¿Continúa una candidata coherente?
+        # Large jump. Does it continue a consistent candidate?
         last = min(s.candidate[1][-1], self.config.range_max) if s.candidate else None
         if s.candidate is not None and abs(cmp_now - last) <= jump:
             s.candidate[1].append(distance)
@@ -156,15 +156,15 @@ class RangeFilter:
             s.candidate = (t, [distance])
 
         if t - s.candidate[0] >= self.config.spike_confirm_time:
-            # Confirmado: es un cambio real (obstáculo nuevo o que desaparece).
+            # Confirmed: it is a real change (a new obstacle or one that disappears).
             s.accepted.clear()
             s.accepted.extend(s.candidate[1][-s.accepted.maxlen:])
             s.reference = distance
             s.candidate = None
-            s.history.clear()      # el d_dot anterior ya no vale
+            s.history.clear()      # the previous d_dot is no longer valid
 
     def _record_history(self, t, s, distance):
-        """Guarda la distancia filtrada para d_dot (solo valores finitos)."""
+        """Store the filtered distance for d_dot (finite values only)."""
         if not math.isfinite(distance):
             s.history.clear()
             return
@@ -188,11 +188,11 @@ def _median(values):
 
 
 def time_to_collision(distance, closing_rate):
-    """TTC = distance / -d_dot si el obstáculo se acerca; math.inf en otro caso."""
+    """TTC = distance / -d_dot if the obstacle is approaching; math.inf otherwise."""
     if closing_rate is None or not math.isfinite(closing_rate) or closing_rate >= 0.0:
         return math.inf
     if math.isnan(distance) or distance == math.inf:
         return math.inf
-    if distance <= 0.0:          # -inf (demasiado cerca) o 0
+    if distance <= 0.0:          # -inf (too close) or 0
         return 0.0
     return distance / -closing_rate

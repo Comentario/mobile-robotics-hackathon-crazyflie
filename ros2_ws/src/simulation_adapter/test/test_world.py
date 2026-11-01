@@ -1,4 +1,4 @@
-"""Geometría, ventanas temporales y seis sensores, sin ROS."""
+"""Geometry, time windows and six sensors, without ROS."""
 import math
 from pathlib import Path
 import random

@@ -1,9 +1,9 @@
-# Lecturas del Multi-ranger + ToF inferior del Flow Deck, en metros.
-# Convención REP-117:
-#   +inf -> sin retorno (nada dentro de range_max)
-#   -inf -> objeto más cerca que range_min
-#   NaN  -> lectura inválida o sensor no disponible
-# header.frame_id = base_link. Posición de cada sensor: config/frames.yaml.
+# Multi-ranger + Flow Deck bottom ToF readings, in metres.
+# REP-117 convention:
+#   +inf -> no return (nothing within range_max)
+#   -inf -> object closer than range_min
+#   NaN  -> invalid reading or sensor not available
+# header.frame_id = base_link. Position of every sensor: config/frames.yaml.
 std_msgs/Header header
 float32 front
 float32 back

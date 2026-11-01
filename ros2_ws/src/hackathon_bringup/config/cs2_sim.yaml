@@ -1,4 +1,4 @@
-# Overlay para el nivel 2 de simulación: backend sim de Crazyswarm2 (sin Multi-ranger).
+# Overlay for simulation level 2: Crazyswarm2 sim backend (no Multi-ranger).
 # Uso: real.launch.py params:=simulation.yaml overlay:=cs2_sim.yaml mission:=missions/single.yaml
 safety_supervisor:
   ros__parameters:

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""T01/T02 integrados: API persona 2 + misión/seguidor/safety reales del equipo.
+"""Integrated T01/T02: person 2 API + the team's real mission/follower/safety.
 
-Ejecutar con ROS e install/setup.bash cargados. No radio. Para sil requiere
-crazyflie_server backend sim ya en marcha, con /clock y TF world→cf231.
+Run with ROS and install/setup.bash sourced. No radio. For sil it requires the
+crazyflie_server sim backend already running, with /clock and TF world->cf231.
 """
 import argparse
 import os
@@ -49,8 +49,8 @@ def main():
         while time.monotonic()<end:
             executor.spin_once(timeout_sec=.02)
             if predicate(): return
-            if process and process.poll() is not None: raise AssertionError('Launch terminó antes de tiempo')
-        raise AssertionError('Timeout; revisar salud, safety y logs de integración')
+            if process and process.poll() is not None: raise AssertionError('Launch exited prematurely')
+        raise AssertionError('Timeout; check health, safety and the integration logs')
     try:
         with tempfile.TemporaryDirectory(prefix='hk-mvp-') as folder:
             overlay=Path(folder)/'test.yaml'
@@ -82,11 +82,11 @@ def main():
                     assert all(msg.header.frame_id=='map' for msg in messages['safe'])
                     assert messages['ranges'][-1].header.frame_id=='base_link'
                     assert 'Traceback' not in log_path.read_text(),log_path.read_text()
-                    print(f'PASS {args.scenario} ({args.backend}): pose → salud/rangos → misión → navegación → safety → cf_adapter → dron → aterrizaje')
-                    print(f'PASS topics acordados y publisher único; log: {log_path}')
+                    print(f'PASS {args.scenario} ({args.backend}): pose -> health/ranges -> mission -> navigation -> safety -> cf_adapter -> drone -> landing')
+                    print(f'PASS agreed topics and single publisher; log: {log_path}')
                 except BaseException:
                     if messages['state']:
-                        print('Última posición:', messages['state'][-1].pose.pose.position)
+                        print('Last position:', messages['state'][-1].pose.pose.position)
                     for key in ('ranges','rates','safety'):
                         if messages[key]: print(key, messages[key][-1])
                     print(log_path.read_text()[-15000:])

@@ -1,27 +1,27 @@
-# TP-42 C: plantilla Crazyswarm2 (no es un YAML de parámetros del stack).
-# Cambiar ROBOT_ID_TODO aquí y en event.yaml; copiar URI y tipo del equipo entregado.
-# Mantener disabled hasta confirmar robot, radio, firmware y localización.
+# TP-42 C: Crazyswarm2 template (not a stack parameter YAML).
+# Change ROBOT_ID_TODO here and in event.yaml; copy the URI and type of the delivered unit.
+# Keep it disabled until robot, radio, firmware and localization are confirmed.
 fileversion: 3
 robots:
   ROBOT_ID_TODO:
     enabled: false
     uri: RADIO_URI_TODO
-    initial_position: [0.0, 0.0, 0.0] # origen/posición reales, confirmar
+    initial_position: [0.0, 0.0, 0.0] # real origin/position, to confirm
     type: EVENT_TYPE_TODO
-    reference_frame: world           # debe compartir origen/ejes con map del stack
+    reference_frame: world           # must share origin/axes with the stack map
     firmware_logging:
       enabled: true
       default_topics:
         odom: {frequency: 50}
         scan: {frequency: 20}
-      # Vertical opcional: confirmar variables en firmware antes de activar.
+      # Optional vertical ranges: confirm the firmware variables before enabling.
       # custom_topics:
       #   vertical_ranges:
       #     frequency: 20
       #     vars: [range.up, range.zrange]
 robot_types:
   EVENT_TYPE_TODO:
-    # Sustituir por el bloque robot_types entregado y verificar decks/estimador.
+    # Replace with the delivered robot_types block and check decks/estimator.
     motion_capture:
-      tracking: none # plantilla sin mocap externo; no configura Lighthouse ni Flow
+      tracking: none # template without external mocap; configures neither Lighthouse nor Flow
     big_quad: false

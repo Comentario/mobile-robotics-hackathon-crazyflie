@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Simulador cinemático propio: publica pose y rangos sintéticos con la misma API que cf_adapter.',
+    description='Our own kinematic simulator: publishes pose and synthetic ranges with the same API as cf_adapter.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

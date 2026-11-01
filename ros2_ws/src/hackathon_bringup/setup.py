@@ -23,7 +23,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Launch files y configuración del stack.',
+    description='Launch files and configuration of the stack.',
     license='TODO',
     tests_require=['pytest'],
 )

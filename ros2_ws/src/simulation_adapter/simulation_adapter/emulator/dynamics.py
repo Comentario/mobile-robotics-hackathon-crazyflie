@@ -1,60 +1,60 @@
-"""Modelo cinemático simple del dron (TP-10).
+"""Simple kinematic drone model (TP-10).
 
-No modela la física del quadrotor: el controlador onboard real se aproxima con una
-respuesta de primer orden hacia el setpoint, limitada en velocidad y aceleración.
+It does not model quadrotor physics: the real onboard controller is approximated
+with a first-order response towards the setpoint, limited in speed and acceleration.
 
-Este módulo es lógica pura (regla 6 de docs/interfaces.md): no importa rclpy ni
-mensajes ROS, así que se puede probar con pytest sin lanzar ROS. El nodo
-(sim_node.py) es quien traduce los mensajes ROS a la clase Command de aquí.
+This module is pure logic (rule 6 of docs/interfaces.md): it does not import rclpy
+or ROS messages, so it can be tested with pytest without launching ROS. The node
+(sim_node.py) translates the ROS messages into the Command class defined here.
 
-Modos internos del dron (atributo ``KinematicDrone.mode``)
----------------------------------------------------------
-  'idle'       En el suelo, motores parados. Ignora los setpoints.
-  'takeoff'    Subiendo hasta la altura pedida (rampa lineal durante ``duration``).
-  'land'       Bajando hasta el suelo (rampa lineal durante ``duration``).
-  'command'    Siguiendo el último setpoint recibido (POSITION / VELOCITY / HOVER).
-  'hover'      Quieto en un punto fijo. Se entra al terminar el despegue (como el
-               high-level commander del firmware, que sigue generando setpoints).
-               Sin firmware_watchdog: también cuando salta el watchdog.
-  'level_out'  Solo con firmware_watchdog: sin setpoints durante command_watchdog
-               (0.5 s). Roll/pitch a 0: mantiene la altura pero sigue deslizando
-               con la velocidad horizontal que llevaba.
-  'emergency'  Motores fuera: cae hasta z = 0 y ya no acepta ningún comando.
+Internal drone modes (attribute ``KinematicDrone.mode``)
+--------------------------------------------------------
+  'idle'       On the ground, motors stopped. Ignores setpoints.
+  'takeoff'    Climbing to the requested height (linear ramp over ``duration``).
+  'land'       Descending to the ground (linear ramp over ``duration``).
+  'command'    Following the last received setpoint (POSITION / VELOCITY / HOVER).
+  'hover'      Still at a fixed point. Entered when the takeoff ends (like the
+               firmware high-level commander, which keeps generating setpoints).
+               Without firmware_watchdog: also when the watchdog fires.
+  'level_out'  Only with firmware_watchdog: no setpoints for command_watchdog
+               (0.5 s). Roll/pitch to 0: keeps the height but keeps sliding with
+               the horizontal velocity it had.
+  'emergency'  Motors off: falls to z = 0 and no longer accepts any command.
 
-Watchdog del firmware real (firmware_watchdog=True)
----------------------------------------------------
-  Copiado de crazyflie-firmware 2025.02, src/modules/src/supervisor.c:
-    COMMANDER_WDT_TIMEOUT_STABILIZE = 500 ms  -> estado WarningLevelOut
-    COMMANDER_WDT_TIMEOUT_SHUTDOWN  = 2000 ms -> estado ExceptFreeFall (motores fuera)
-  Solo afecta al streaming de setpoints de bajo nivel (modo 'command'). El
-  high-level commander (takeoff/land/hover tras despegar) genera sus propios
-  setpoints y no dispara el watchdog.
+Real firmware watchdog (firmware_watchdog=True)
+-----------------------------------------------
+  Copied from crazyflie-firmware 2025.02, src/modules/src/supervisor.c:
+    COMMANDER_WDT_TIMEOUT_STABILIZE = 500 ms  -> WarningLevelOut state
+    COMMANDER_WDT_TIMEOUT_SHUTDOWN  = 2000 ms -> ExceptFreeFall state (motors off)
+  It only affects low-level setpoint streaming ('command' mode). The high-level
+  commander (takeoff/land/hover after takeoff) generates its own setpoints and
+  does not trigger the watchdog.
 
-Qué hace cada paso de simulación (step)
----------------------------------------
-  1. Si está en 'command' y el último setpoint es demasiado viejo -> 'hover'.
-  2. Calcula una velocidad deseada según el modo.
-  3. La limita a max_speed (norma 3D).
-  4. Limita el cambio de velocidad a max_accel * dt (aceleración máxima).
-  5. Integra la posición: p = p + v * dt, sin bajar del suelo (z >= 0).
-  6. Gira el yaw hacia el objetivo a velocidad angular limitada.
+What every simulation step does (step)
+--------------------------------------
+  1. If in 'command' and the last setpoint is too old -> 'hover'.
+  2. Compute a desired velocity according to the mode.
+  3. Limit it to max_speed (3D norm).
+  4. Limit the velocity change to max_accel * dt (maximum acceleration).
+  5. Integrate the position: p = p + v * dt, never below the ground (z >= 0).
+  6. Turn the yaw towards the target at a limited angular rate.
 """
 import math
 from dataclasses import dataclass
 
-# Constante de tiempo (s) de la respuesta de primer orden: con un error de
-# posición e, la velocidad deseada es e / TIME_CONSTANT. Cuanto menor, más
-# "agresivo" es el seguimiento. 0.3 s da un movimiento suave y creíble.
+# Time constant (s) of the first-order response: with a position error e, the
+# desired velocity is e / TIME_CONSTANT. The smaller, the more "aggressive" the
+# tracking. 0.3 s gives smooth, believable motion.
 TIME_CONSTANT = 0.3
 
-# Velocidad angular máxima del yaw (rad/s).
+# Maximum yaw rate (rad/s).
 MAX_YAW_RATE = 1.5
 
-# Aceleración de caída en emergencia (m/s^2).
+# Fall acceleration in an emergency (m/s^2).
 GRAVITY = 9.81
 
-# Distancia (m) a partir de la cual se considera alcanzada la altura de despegue
-# o el suelo al aterrizar.
+# Distance (m) below which the takeoff height, or the ground when landing, counts
+# as reached.
 ARRIVAL_TOLERANCE = 0.02
 
 
@@ -72,14 +72,14 @@ class DroneState:
 
 @dataclass
 class Command:
-    """Setpoint ya traducido desde el mensaje ROS (lo crea sim_node.py).
+    """Setpoint already translated from the ROS message (created by sim_node.py).
 
     mode:
-      'position'  ir a (x, y, z) con orientación yaw.
-      'velocity'  moverse en el plano a velocidad (vx, vy) manteniendo la
-                  altura z (semántica de Setpoint.msg: "seguir velocity
-                  manteniendo position.z"). vz se ignora.
-      'hover'     quedarse quieto donde esté al recibir el primer HOVER.
+      'position'  go to (x, y, z) with orientation yaw.
+      'velocity'  move in the plane at velocity (vx, vy) keeping height z
+                  (Setpoint.msg semantics: "follow velocity while keeping
+                  position.z"). vz is ignored.
+      'hover'     stay still where the drone is when the first HOVER arrives.
     """
     mode: str
     x: float = 0.0
@@ -92,7 +92,7 @@ class Command:
 
 
 def _clamp_norm(vector, max_norm):
-    """Escala un vector (tupla) para que su norma no supere max_norm."""
+    """Scale a vector (tuple) so that its norm does not exceed max_norm."""
     norm = math.sqrt(sum(c * c for c in vector))
     if norm <= max_norm or norm == 0.0:
         return vector
@@ -101,7 +101,7 @@ def _clamp_norm(vector, max_norm):
 
 
 def _wrap_angle(angle):
-    """Normaliza un ángulo a [-pi, pi)."""
+    """Normalize an angle to [-pi, pi)."""
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
@@ -109,11 +109,11 @@ class KinematicDrone:
 
     def __init__(self, max_speed, max_accel, command_watchdog,
                  firmware_watchdog=False, shutdown_timeout=2.0):
-        """command_watchdog: s sin setpoints de bajo nivel antes de reaccionar.
+        """command_watchdog: s without low-level setpoints before reacting.
 
-        firmware_watchdog=False: reacción "amable" (hover), la del simulador antiguo.
-        firmware_watchdog=True:  como el firmware real: level_out tras
-        command_watchdog y caída (emergency) tras shutdown_timeout.
+        firmware_watchdog=False: "gentle" reaction (hover), as in the old simulator.
+        firmware_watchdog=True:  like the real firmware: level_out after
+        command_watchdog and fall (emergency) after shutdown_timeout.
         """
         self.state = DroneState()
         self.max_speed = max_speed
@@ -124,38 +124,38 @@ class KinematicDrone:
         self.emergency_reason = ''
 
         self.mode = 'idle'
-        self._t = 0.0                       # último instante visto en step()
-        self._command = None                # último Command aceptado
-        self._command_time = None           # instante en que llegó
+        self._t = 0.0                       # last time seen in step()
+        self._command = None                # last accepted Command
+        self._command_time = None           # time at which it arrived
         self._hover_point = (0.0, 0.0, 0.0)
         self._yaw_target = 0.0
-        # Rampa vertical de takeoff/land: (t0, x0, y0, z0, z1, duration)
+        # Vertical takeoff/land ramp: (t0, x0, y0, z0, z1, duration)
         self._ramp = None
 
     # ------------------------------------------------------------------
-    # Configuración inicial
+    # Initial configuration
     # ------------------------------------------------------------------
     def reset_pose(self, x, y, z, yaw):
-        """Coloca el dron en una pose inicial (la 'start' del escenario)."""
+        """Place the drone at an initial pose (the scenario 'start')."""
         self.state = DroneState(x=x, y=y, z=z, yaw=yaw)
         self._yaw_target = yaw
 
     # ------------------------------------------------------------------
-    # Entradas (las llama el nodo ROS)
+    # Inputs (called by the ROS node)
     # ------------------------------------------------------------------
     def set_command(self, t, setpoint):
-        """Guarda el último Setpoint (modo POSITION, VELOCITY o HOVER) y su timestamp.
+        """Store the last Setpoint (POSITION, VELOCITY or HOVER mode) and its timestamp.
 
-        Devuelve True si se acepta y False si se ignora (dron en el suelo,
-        en emergencia, o modo desconocido).
+        Returns True if accepted and False if ignored (drone on the ground, in an
+        emergency, or unknown mode).
         """
         if self.mode in ('idle', 'emergency'):
             return False
         if setpoint.mode not in ('position', 'velocity', 'hover'):
             return False
 
-        # Si ya estábamos recibiendo HOVER, conservamos el punto de hover:
-        # así un flujo continuo de HOVER no hace "derivar" el dron.
+        # If HOVER was already being received, keep the hover point: that way a
+        # continuous HOVER stream does not make the drone "drift".
         already_hovering = (
             self.mode == 'command'
             and self._command is not None
@@ -163,8 +163,8 @@ class KinematicDrone:
         )
 
         if self.mode in ('takeoff', 'land'):
-            # Un setpoint de bajo nivel corta la maniobra de alto nivel (el
-            # firmware da prioridad al streaming de bajo nivel).
+            # A low-level setpoint cuts the high-level manoeuvre (the firmware gives
+            # priority to low-level streaming).
             self._ramp = None
         self._command = setpoint
         self._command_time = t
@@ -179,39 +179,39 @@ class KinematicDrone:
         return True
 
     def takeoff(self, height, duration):
-        """Sube desde el suelo hasta z = height en 'duration' segundos.
+        """Climb from the ground to z = height in 'duration' seconds.
 
-        Devuelve (success, message), igual que el servicio /hk/takeoff.
+        Returns (success, message), like the /hk/takeoff service.
         """
         if self.mode == 'emergency':
-            return False, 'Emergencia activa: el dron no acepta comandos'
+            return False, 'Emergency active: the drone does not accept commands'
         if self.mode != 'idle':
-            return False, f'El dron ya está en vuelo (modo {self.mode})'
+            return False, f'The drone is already flying (mode {self.mode})'
         if height <= 0.0 or duration <= 0.0:
-            return False, 'height y duration deben ser positivos'
+            return False, 'height and duration must be positive'
 
         self.state.flying = True
         self._start_ramp(height, duration)
         self.mode = 'takeoff'
-        return True, f'Despegando a {height:.2f} m en {duration:.1f} s'
+        return True, f'Taking off to {height:.2f} m in {duration:.1f} s'
 
     def land(self, duration):
-        """Baja hasta el suelo en 'duration' segundos y apaga motores al llegar."""
+        """Descend to the ground in 'duration' seconds and stop the motors on arrival."""
         if self.mode in ('idle', 'emergency'):
-            return False, f'No se puede aterrizar en modo {self.mode}'
+            return False, f'Cannot land in mode {self.mode}'
         if duration <= 0.0:
-            return False, 'duration debe ser positiva'
+            return False, 'duration must be positive'
 
         self._start_ramp(0.0, duration)
         self._command = None
         self.mode = 'land'
-        return True, f'Aterrizando en {duration:.1f} s'
+        return True, f'Landing in {duration:.1f} s'
 
     def high_level_hover(self):
-        """El high-level commander toma el control: hover donde está.
+        """The high-level commander takes over: hover where the drone is.
 
-        Lo usa el nodo al recibir notify_setpoints_stop (el firmware deja de dar
-        prioridad al streaming de bajo nivel).
+        Used by the node when notify_setpoints_stop arrives (the firmware stops
+        giving priority to low-level streaming).
         """
         if self.mode in ('command', 'level_out'):
             s = self.state
@@ -221,7 +221,7 @@ class KinematicDrone:
         return False
 
     def emergency_stop(self, reason='emergency'):
-        """Motores fuera: el dron cae (z -> 0) y deja de aceptar comandos."""
+        """Motors off: the drone falls (z -> 0) and stops accepting commands."""
         self.emergency_reason = reason
         self.mode = 'emergency'
         self.state.flying = False
@@ -231,10 +231,10 @@ class KinematicDrone:
         self.state.vy = 0.0
 
     # ------------------------------------------------------------------
-    # Simulación
+    # Simulation
     # ------------------------------------------------------------------
     def step(self, t, dt):
-        """Avanza la simulación dt segundos y devuelve el DroneState."""
+        """Advance the simulation by dt seconds and return the DroneState."""
         self._t = t
         s = self.state
 
@@ -246,7 +246,7 @@ class KinematicDrone:
             s.vx = s.vy = s.vz = 0.0
             return s
 
-        # 1. Watchdog: sin setpoints de bajo nivel recientes.
+        # 1. Watchdog: no recent low-level setpoints.
         if self.mode in ('command', 'level_out'):
             age = t - self._command_time
             if not self.firmware_watchdog:
@@ -260,7 +260,7 @@ class KinematicDrone:
                 self.mode = 'level_out'                # WarningLevelOut
                 self._hover_point = (s.x, s.y, s.z)
 
-        # 2-4. Velocidad deseada, limitada en velocidad y aceleración.
+        # 2-4. Desired velocity, limited in speed and acceleration.
         desired = _clamp_norm(self._desired_velocity(t), self.max_speed)
         delta = (desired[0] - s.vx, desired[1] - s.vy, desired[2] - s.vz)
         delta = _clamp_norm(delta, self.max_accel * dt)
@@ -268,7 +268,7 @@ class KinematicDrone:
         s.vy += delta[1]
         s.vz += delta[2]
 
-        # 5. Integrar posición, sin atravesar el suelo.
+        # 5. Integrate the position without going through the ground.
         s.x += s.vx * dt
         s.y += s.vy * dt
         s.z += s.vz * dt
@@ -276,7 +276,7 @@ class KinematicDrone:
             s.z = 0.0
             s.vz = max(s.vz, 0.0)
 
-        # 6. Yaw con velocidad angular limitada.
+        # 6. Yaw with limited angular rate.
         yaw_error = _wrap_angle(self._yaw_target - s.yaw)
         max_step = MAX_YAW_RATE * dt
         s.yaw = _wrap_angle(s.yaw + max(-max_step, min(max_step, yaw_error)))
@@ -285,10 +285,10 @@ class KinematicDrone:
         return s
 
     # ------------------------------------------------------------------
-    # Funciones internas
+    # Internal functions
     # ------------------------------------------------------------------
     def _desired_velocity(self, t):
-        """Velocidad que el 'controlador' querría ahora, según el modo."""
+        """Velocity the 'controller' would want now, according to the mode."""
         s = self.state
 
         if self.mode in ('takeoff', 'land'):
@@ -300,20 +300,20 @@ class KinematicDrone:
             return self._towards(self._hover_point)
 
         if self.mode == 'level_out':
-            # Roll/pitch = 0: sin aceleración horizontal (sigue deslizando).
+            # Roll/pitch = 0: no horizontal acceleration (keeps sliding).
             return (s.vx, s.vy, (self._hover_point[2] - s.z) / TIME_CONSTANT)
 
         # mode == 'command'
         cmd = self._command
         if cmd.mode == 'velocity':
-            # XY: la velocidad pedida. Z: mantener la altura del setpoint.
+            # XY: the requested velocity. Z: keep the setpoint height.
             return (cmd.vx, cmd.vy, (cmd.z - s.z) / TIME_CONSTANT)
         if cmd.mode == 'hover':
             return self._towards(self._hover_point)
         return self._towards((cmd.x, cmd.y, cmd.z))
 
     def _towards(self, target, vz_feedforward=0.0):
-        """Respuesta de primer orden: velocidad proporcional al error."""
+        """First-order response: velocity proportional to the error."""
         s = self.state
         return (
             (target[0] - s.x) / TIME_CONSTANT,
@@ -322,12 +322,12 @@ class KinematicDrone:
         )
 
     def _start_ramp(self, z_goal, duration):
-        """Prepara una rampa vertical desde la altura actual hasta z_goal."""
+        """Prepare a vertical ramp from the current height to z_goal."""
         s = self.state
         self._ramp = (self._t, s.x, s.y, s.z, z_goal, duration)
 
     def _ramp_reference(self, t):
-        """Altura de referencia de la rampa en el instante t y su velocidad."""
+        """Ramp reference height at time t and its velocity."""
         t0, _, _, z0, z1, duration = self._ramp
         progress = min(max((t - t0) / duration, 0.0), 1.0)
         z_ref = z0 + progress * (z1 - z0)
@@ -335,7 +335,7 @@ class KinematicDrone:
         return z_ref, vz_feedforward
 
     def _check_maneuver_end(self, t):
-        """Termina el despegue (-> hover) o el aterrizaje (-> idle)."""
+        """Finish the takeoff (-> hover) or the landing (-> idle)."""
         if self._ramp is None or self.mode not in ('takeoff', 'land'):
             return
         t0, x0, y0, _, z1, duration = self._ramp
@@ -360,7 +360,7 @@ class KinematicDrone:
         self.mode = 'hover'
 
     def _fall(self, dt):
-        """Caída libre vertical hasta el suelo (modo emergencia)."""
+        """Vertical free fall to the ground (emergency mode)."""
         s = self.state
         if s.z > 0.0:
             s.vz -= GRAVITY * dt

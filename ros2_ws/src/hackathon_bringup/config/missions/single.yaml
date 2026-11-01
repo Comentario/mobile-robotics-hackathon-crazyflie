@@ -1,5 +1,5 @@
-# Un waypoint al otro lado de la sala (T01).
-# [x, y, z] en metros, frame map.
+# One waypoint on the other side of the room (T01).
+# [x, y, z] in metres, map frame.
 frame_id: map
 waypoints:
   - [1.5, 0.0, 0.5]

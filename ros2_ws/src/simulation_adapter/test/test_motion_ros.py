@@ -1,4 +1,4 @@
-"""TP-10, paso 3: comando ROS → movimiento → odometría, sin hardware."""
+"""TP-10, step 3: ROS command -> motion -> odometry, without hardware."""
 import math
 import time
 
@@ -43,7 +43,7 @@ def rig(request):
         end = time.monotonic() + timeout
         while not predicate() and time.monotonic() < end:
             executor.spin_once(timeout_sec=0.01)
-        assert predicate(), 'No se observó el resultado ROS esperado'
+        assert predicate(), 'The expected ROS result was not observed'
 
     def command():
         msg = Setpoint()
@@ -79,7 +79,7 @@ def test_position_command_moves_published_odometry_and_timeout_latches_hover(rig
     wait(lambda: abs(simulator.state.vx) < 0.005)
     assert simulator.target == hover_target
     assert abs(simulator.state.x - hover_target[0]) < 0.02
-    print(f'ROS PASS: x inicial=0, x durante navegación={state.pose.pose.position.x:.3f}, '
+    print(f'ROS PASS: initial x=0, x while navigating={state.pose.pose.position.x:.3f}, '
           f'hover={simulator.state.x:.3f}, vx={simulator.state.vx:.4f}')
 
 
@@ -151,7 +151,7 @@ def test_ros_takeoff_land_and_commands_blocked_during_maneuvers(rig):
     wait(lambda: simulator.drone.phase == 'FLYING')
     timer.cancel()
     assert simulator.state.z == pytest.approx(0.2, abs=0.015)
-    assert abs(simulator.state.x) < 0.01  # No aceptó navegación durante despegue.
+    assert abs(simulator.state.x) < 0.01  # Navigation was not accepted during takeoff.
     request = Land.Request()
     request.duration = 0.5
     future = land.call_async(request)
@@ -163,7 +163,7 @@ def test_ros_takeoff_land_and_commands_blocked_during_maneuvers(rig):
     wait(lambda: odometry[-1].pose.pose.position.z == 0)
     assert simulator.state.vz == 0
     assert not simulator.state.flying
-    print('ROS PASS: suelo → despegue → vuelo → aterrizaje → suelo')
+    print('ROS PASS: ground -> takeoff -> flight -> landing -> ground')
 
 
 def test_ros_emergency_falls_and_rejects_restart_without_node_reset(rig):
@@ -221,7 +221,7 @@ def test_ros_ranges_truth_markers_and_motion_are_consistent(rig):
     wait(lambda: ranges[-1].front < 1.80)
     assert ranges[-1].front == pytest.approx(2-simulator.state.x-.02,abs=.02)
     timer.cancel()
-    print('ROS PASS: comando → movimiento → seis rangos coherentes, ground truth, TF y marcadores')
+    print('ROS PASS: command -> motion -> six consistent ranges, ground truth, TF and markers')
 
 
 def test_ros_velocity_and_yaw(rig):
@@ -287,7 +287,7 @@ def test_ros_complete_flight_with_navigation_and_sensors(rig):
     assert future.result().success
     wait(lambda: simulator.drone.phase == 'GROUND')
     wait(lambda: ranges[-1].down == -math.inf and odometry[-1].pose.pose.position.z == 0)
-    print('ROS PASS: despegue → POSITION → rangos contra sala → aterrizaje')
+    print('ROS PASS: takeoff -> POSITION -> ranges against the room -> landing')
 
 
 def test_main_fault_injector_is_connected_to_commands_and_ros_ranges(rig):
@@ -316,5 +316,5 @@ def test_main_pose_fault_does_not_change_ground_truth(rig):
     simulator.fault_injector = FaultInjector([dict(type='pose_dropout')])
     count, truth_count = len(odometry), len(truth)
     wait(lambda: len(truth) > truth_count+5)
-    # Una publicación que ya estaba en tránsito puede llegar al cambiar la inyección.
+    # A message already in transit may arrive when the injection changes.
     assert len(odometry) <= count+1

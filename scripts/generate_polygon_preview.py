@@ -112,10 +112,10 @@ def plot(snapshot, result, target):
               origin='lower', cmap=ListedColormap(['#ffffff', '#eeeeee']), vmin=0, vmax=100)
     ax.add_patch(Polygon(POLYGON, closed=True, fill=False, edgecolor='black', linewidth=2))
     x, y, xmax, ymax = OBSTACLE
-    ax.add_patch(Rectangle((x, y), xmax-x, ymax-y, facecolor='#333333', label='Obstáculo sintético'))
-    route_label = ('Propuesta con puntos corregidos' if result['waypoint_changes']
-                   else 'Ruta calculada: mismos waypoints')
-    for key, color, style, label in [('initial', '#c93232', '--', 'Ruta directa solicitada'),
+    ax.add_patch(Rectangle((x, y), xmax-x, ymax-y, facecolor='#333333', label='Synthetic obstacle'))
+    route_label = ('Proposal with corrected points' if result['waypoint_changes']
+                   else 'Computed route: same waypoints')
+    for key, color, style, label in [('initial', '#c93232', '--', 'Requested direct route'),
                                     ('proposed', '#167b46', '-', route_label)]:
         points = result[key]
         ax.plot([p[0] for p in points], [p[1] for p in points], style, color=color, label=label)
@@ -126,8 +126,8 @@ def plot(snapshot, result, target):
             ax.scatter(*proposal[:2], color='#167b46', s=25)
             ax.plot([original[0], proposal[0]], [original[1], proposal[1]], ':', color='#555555')
     ax.set(xlim=(-1.95, 2.4), ylim=(-.9, 1.3), xlabel='X Lighthouse (m)', ylabel='Y Lighthouse (m)',
-           title=f'Mapa sintético — Z=0,8 m — separación={result["clearance_m"]:.2f} m\n'
-                 'Puntos originales conservados; sin comandos de vuelo')
+           title=f'Synthetic map — Z=0.8 m — clearance={result["clearance_m"]:.2f} m\n'
+                 'Original points kept; no flight commands')
     ax.set_aspect('equal')
     ax.legend(loc='lower center', fontsize=8)
     fig.tight_layout()

@@ -3,7 +3,7 @@
 <package format="3">
   <name>hackathon_interfaces</name>
   <version>0.1.0</version>
-  <description>Mensajes y servicios propios del stack (API de hardware y estados). Ver docs/interfaces.md.</description>
+  <description>Messages and services of the stack (hardware API and states). See docs/interfaces.md.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

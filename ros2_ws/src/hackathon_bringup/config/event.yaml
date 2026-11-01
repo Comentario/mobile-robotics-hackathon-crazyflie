@@ -1,11 +1,11 @@
-# TP-42 C: plantilla del stack. Valores iniciales de desarrollo, NO calibrados.
-# Confirmar con los mentores: frames/origen, límites, sensores, velocidades y waypoints.
-# Identidad/URI de radio: event_hardware.yaml (lo consume Crazyswarm2, no cf_adapter).
-# robot_name debe coincidir con su clave robots. Ejecutar scripts/verify_event_config.py.
-# Procedimiento de preparación y parada: docs/hackathon_day_runbook.md.
+# TP-42 C: stack template. Initial development values, NOT calibrated.
+# Confirm with the mentors: frames/origin, limits, sensors, speeds and waypoints.
+# Radio identity/URI: event_hardware.yaml (used by Crazyswarm2, not cf_adapter).
+# robot_name must match its robots key. Run scripts/verify_event_config.py.
+# Preparation and stop procedure: docs/hackathon_day_runbook.md.
 
-# Sección /** = parámetros compartidos por todos los nodos (una sola fuente de verdad).
-# Cada otra sección = nombre del nodo (= nombre del paquete).
+# Section /** = parameters shared by all nodes (a single source of truth).
+# Every other section = node name (= package name).
 /**:
   ros__parameters:
     map_frame: map
@@ -13,8 +13,8 @@
     z_min: 0.2
     z_nominal: 0.5
     z_max: 1.5
-    state_timeout: 0.3          # s sin pose -> LOST / HOVER
-    range_timeout: 0.3          # s sin rangos -> rangos vencidos
+    state_timeout: 0.3          # s without pose -> LOST / HOVER
+    range_timeout: 0.3          # s without ranges -> stale ranges
     warning_distance: 0.6    # m
     critical_distance: 0.3  # m
     ttc_threshold: 1.5          # s
@@ -24,23 +24,23 @@ simulation_adapter:
     sim_rate: 100.0
     state_rate: 50.0
     range_rate: 20.0
-    range_min: 0.02          # m, límites de los sensores sintéticos
+    range_min: 0.02          # m, limits of the synthetic sensors
     range_max: 4.0
-    max_yaw_rate: 1.5        # rad/s, modelo cinemático
-    random_seed: 0          # ruido reproducible
+    max_yaw_rate: 1.5        # rad/s, kinematic model
+    random_seed: 0          # reproducible noise
     max_speed: 1.0
     max_accel: 2.0
-    response_time: 1.0       # simulador; no modifica el controlador del dron real
-    position_tolerance: 0.01 # simulador: m
-    settle_speed: 0.02       # simulador: m/s
-    gravity: 9.81            # simulador: m/s²
+    response_time: 1.0       # simulator; does not change the real drone controller
+    position_tolerance: 0.01 # simulator: m
+    settle_speed: 0.02       # simulator: m/s
+    gravity: 9.81            # simulator: m/s^2
     range_noise_std: 0.01
     pose_noise_std: 0.005
-    command_watchdog: 0.5     # s sin setpoints -> hover; política del simulador propio
+    command_watchdog: 0.5     # s without setpoints -> hover; policy of our own simulator
 
 cf_adapter:
   ros__parameters:
-    robot_name: ROBOT_ID_TODO # sustituir también en event_hardware.yaml
+    robot_name: ROBOT_ID_TODO # replace it in event_hardware.yaml too
     state_source: odom       # enable odom and scan in Crazyswarm2 firmware_logging
     odom_linear_frame: world # installed cflib server; confirm for selected backend
     odom_angular_units: degrees # installed cflib gyro logs; confirm for selected backend
@@ -78,11 +78,11 @@ mission_manager:
     waypoint_timeout: 30.0
     takeoff_duration: 2.0
     land_duration: 2.0
-    autostart: false          # misión solo mediante /hk/mission/start
+    autostart: false          # mission only through /hk/mission/start
 
 global_planner:
   ros__parameters:
-    planner_mode: direct      # direct (P0, sin mapa) | astar (P1)
+    planner_mode: direct      # direct (P0, no map) | astar (P1)
     planner_rate: 2.0
     replan_period: 2.0
     connectivity: 8
@@ -116,4 +116,4 @@ safety_supervisor:
 
 telemetry:
   ros__parameters:
-    output_dir: /tmp/hk_runs # ruta absoluta; copiar resultados a almacenamiento persistente
+    output_dir: /tmp/hk_runs # absolute path; copy results to persistent storage

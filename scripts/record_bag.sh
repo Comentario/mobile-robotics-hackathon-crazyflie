@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Graba los topics del stack (TP-40). Uso: bash scripts/record_bag.sh <etiqueta>
-# Los bags van a data/bags/ y no se suben a Git.
+# Records the stack topics (TP-40). Usage: bash scripts/record_bag.sh <label>
+# Bags go to data/bags/ and are not pushed to Git.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="${1:-run}"

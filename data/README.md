@@ -1,14 +1,15 @@
 # data/
 
-Datos locales que **no se suben a Git** (ver `.gitignore`):
+Local data that is **not pushed to Git** (see `.gitignore`):
 
-- `bags/`: rosbags grabados con `scripts/record_bag.sh`.
-- `runs/`: resultados que quieran conservar. Por defecto `telemetry` y `run_scenario` escriben en `output_dir` (`/tmp/hk_runs` en `simulation.yaml`).
+- `bags/`: rosbags recorded with `scripts/record_bag.sh`.
+- `runs/`: results you want to keep. By default `telemetry` and `run_scenario` write to `output_dir` (`/tmp/hk_runs` in `simulation.yaml`).
 
-Si un bag es importante para el equipo (p. ej. el primer vuelo real), súbanlo a un almacenamiento compartido y enlácenlo aquí con fecha, escenario y commit.
+If a bag matters to the team (e.g. the first real flight), upload it to shared storage and link it here with the date, scenario and commit.
 
-## Resultados compartidos
+## Shared results
 
-`examples/` contiene exportaciones seleccionadas y versionadas para el equipo.
-Consulta [el resultado de simulación CF2](examples/README.md); los archivos de
-`runs/` siguen siendo locales.
+`examples/` contains selected, versioned exports for the team.
+See [the CF2 simulation result](examples/README.md) and the
+[synthetic cooperative route](examples/cooperative_polygon/); the files in `runs/`
+stay local.

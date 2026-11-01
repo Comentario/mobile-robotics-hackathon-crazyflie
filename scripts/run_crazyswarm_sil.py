@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Arranca Crazyswarm2 SIL instalado, sin radio ni ventana gráfica.
+"""Starts the installed Crazyswarm2 SIL, without radio or a graphical window.
 
-Requiere crazyflie_sim y los bindings cffirmware compatibles con esa instalación.
-Publica /clock y TF world -> cf231; sim_sensors genera los ToF aparte.
+Requires crazyflie_sim and cffirmware bindings compatible with that installation.
+Publishes /clock and TF world -> cf231; sim_sensors generates the ToF separately.
 """
 import argparse
 from pathlib import Path
@@ -26,7 +26,7 @@ def main():
         if robot['enabled']:
             robot['initial_position'] = scenario['start'][:3]
     if 'cf231' not in robots['robots']:
-        raise ValueError('La configuración Crazyswarm2 debe definir cf231')
+        raise ValueError('The Crazyswarm2 configuration must define cf231')
     params = yaml.safe_load((config / 'server.yaml').read_text())['/crazyflie_server']['ros__parameters']
     params.update(robots)
     description = Path(get_package_share_directory('crazyflie_description')) / 'urdf' / 'crazyflie_description.urdf'
@@ -34,13 +34,13 @@ def main():
     params['sim']['backend'] = 'np'
     params['sim']['max_dt'] = 0.0
     for name, visualization in params['sim']['visualizations'].items():
-        visualization['enabled'] = name == 'rviz'  # Este módulo solo publica TF.
+        visualization['enabled'] = name == 'rviz'  # This module only publishes TF.
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml') as stream:
         yaml.safe_dump({'/crazyflie_server': {'ros__parameters': params}}, stream)
         stream.flush()
         rclpy.init(args=['--ros-args', '--params-file', stream.name])
         server = CrazyflieServer()
-    # La física sigue a 2 kHz; publicar TF a 50 Hz evita saturar los nodos ROS.
+    # Physics still runs at 2 kHz; publishing TF at 50 Hz avoids saturating the ROS nodes.
     for visualization in server.visualizations:
         original_step = visualization.step
         previous = [-1.0]

@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Normaliza el estado del dron, publica TF map->base_link y evalúa la salud de la localización.',
+    description='Normalizes the drone state, publishes TF map->base_link and evaluates localization health.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

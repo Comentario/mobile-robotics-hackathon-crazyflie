@@ -1,8 +1,8 @@
-# Goal sin ruta: no avanza a ciegas.
-# Prioridad P1. Formato: docs/simulations.md.
+# Goal without a route: does not advance blindly.
+# Priority P1. Format: docs/simulations.md.
 world: worlds/blocked_goal.yaml
 mission: missions/line.yaml
-start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw del dron al inicio
+start: [-1.5, 0.0, 0.0, 0.0]   # x, y, z, yaw of the drone at start
 timeout: 60.0     # s
 faults: []
 expected:

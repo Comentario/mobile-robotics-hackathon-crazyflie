@@ -1,5 +1,5 @@
-# Goal encerrado: no existe ruta (T13).
-# Formato: simulation_adapter/world.py
+# Enclosed goal: no route exists (T13).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:

@@ -1,67 +1,67 @@
-"""Máquina de estados de seguridad (TP-37).
+"""Safety state machine (TP-37).
 
-Prioridad: ABORT > LAND > HOVER > SLOW > NORMAL. Se evalúa en cada ciclo; un estado
-más grave solo se abandona cuando la causa desaparece (con histéresis).
+Priority: ABORT > LAND > HOVER > SLOW > NORMAL. It is evaluated every cycle; a more
+severe state is only left once its cause has gone away (with hysteresis).
 
-Lógica pura (regla 6 de interfaces.md): sin rclpy, se prueba con pytest.
+Pure logic (rule 6 of interfaces.md): no rclpy, tested with pytest.
 
-Qué decide evaluate() en cada ciclo (de más grave a menos grave)
+What evaluate() decides every cycle (from most to least severe)
 ---------------------------------------------------------------
-  ABORT   Ninguna regla lo activa todavía (reservado). Si se activa, no se sale nunca.
-  LAND    Una causa "de pérdida" (localización LOST, estado vencido o comandos
-          vencidos) dura más de hover_timeout Y el dron está en el aire.
-          Solo con lost_policy = 'hover_then_land'.
-  HOVER   Localización LOST, estado vencido, comandos vencidos, rangos vencidos
-          (si ranges_required), obstáculo demasiado cerca (ver "Distancia de
-          frenado"), dron fuera de la geofence, o el planner sin ruta.
-  SLOW    Localización DEGRADED, o TTC menor que ttc_threshold.
-  NORMAL  Nada de lo anterior.
+  ABORT   No rule triggers it yet (reserved). Once active it is never left.
+  LAND    A "loss" cause (localization LOST, stale state or stale commands) lasts
+          longer than hover_timeout AND the drone is airborne.
+          Only with lost_policy = 'hover_then_land'.
+  HOVER   Localization LOST, stale state, stale commands, stale ranges
+          (if ranges_required), obstacle too close (see "Stopping distance"),
+          drone outside the geofence, or the planner has no path.
+  SLOW    Localization DEGRADED, or TTC below ttc_threshold.
+  NORMAL  None of the above.
 
-Distancia de frenado
---------------------
-  Un dron que va hacia una pared a velocidad v no se para en seco: primero tarda
-  reaction_time en reaccionar (filtro de rangos, ciclo del supervisor, radio) y
-  luego frena con deceleración max_decel. Recorre
-      d_frenado = v * reaction_time + v^2 / (2 * max_decel)
-  Por eso el nodo no compara el rango directamente con critical_distance, sino la
-  "holgura" = rango - d_frenado (effective_clearance), con v = velocidad con la
-  que ESE sensor ve acercarse el obstáculo (-d_dot). Moverse en paralelo a una
-  pared no cuenta como acercarse.
-  Prueba T03 en simulación: a 1 m/s, con critical_distance 0.3 m sin este término,
-  el dron tocaba la pared.
+Stopping distance
+-----------------
+  A drone flying towards a wall at speed v does not stop instantly: it first needs
+  reaction_time to react (range filter, supervisor cycle, radio) and then brakes
+  with deceleration max_decel. It travels
+      d_stop = v * reaction_time + v^2 / (2 * max_decel)
+  So the node does not compare the range with critical_distance directly, but the
+  "clearance" = range - d_stop (effective_clearance), where v is the speed at which
+  THAT sensor sees the obstacle approach (-d_dot). Moving parallel to a wall does
+  not count as approaching it.
+  T03 test in simulation: at 1 m/s with critical_distance 0.3 m and without this
+  term, the drone touched the wall.
 
-Histéresis
+Hysteresis
 ----------
-  Pasar a un estado MÁS grave es inmediato. Volver a uno MENOS grave exige que la
-  causa haya desaparecido durante RECOVERY_TIME s seguidos. Así un fallo que va y
-  viene no hace "parpadear" al dron entre HOVER y NORMAL.
+  Moving to a MORE severe state is immediate. Returning to a LESS severe one requires
+  the cause to be gone for RECOVERY_TIME consecutive seconds. That way a fault that
+  comes and goes does not make the drone "blink" between HOVER and NORMAL.
 
-Qué hace filter_command() con el comando del navegador
-------------------------------------------------------
-  NORMAL  Lo deja pasar (recortado a la geofence y a z_min/z_max).
-  SLOW    Lo deja pasar, pero más despacio:
-            VELOCITY: velocidad x speed_scale.
-            POSITION: objetivo acercado al dron, como mucho slow_max_step m
-                      (y como mucho speed_scale x distancia). Con un objetivo
-                      lejano, solo escalar la distancia no frenaba nada.
-  HOVER   Lo sustituye por "quédate quieto aquí".
-  LAND / ABORT  Lo descarta (None): el aterrizaje o la emergencia ya se pidieron
-                por servicio.
+What filter_command() does with the navigator command
+-----------------------------------------------------
+  NORMAL  Passes it through (clamped to the geofence and to z_min/z_max).
+  SLOW    Passes it through, but slower:
+            VELOCITY: velocity x speed_scale.
+            POSITION: target moved towards the drone, at most slow_max_step m
+                      (and at most speed_scale x distance). With a distant target,
+                      only scaling the distance did not slow anything down.
+  HOVER   Replaces it with "stay still here".
+  LAND / ABORT  Drops it (None): the landing or emergency has already been requested
+                through a service.
 """
 import math
 from dataclasses import dataclass
 
-NORMAL, SLOW, HOVER, LAND, ABORT = range(5)   # igual que hackathon_interfaces/SafetyState
+NORMAL, SLOW, HOVER, LAND, ABORT = range(5)   # same as hackathon_interfaces/SafetyState
 STATE_NAMES = ('NORMAL', 'SLOW', 'HOVER', 'LAND', 'ABORT')
 
-# Modos de Setpoint (igual que hackathon_interfaces/Setpoint).
+# Setpoint modes (same as hackathon_interfaces/Setpoint).
 MODE_POSITION, MODE_VELOCITY, MODE_HOVER = 0, 1, 2
 
-# GOOD / DEGRADED / LOST (igual que hackathon_interfaces/LocalizationHealth).
+# GOOD / DEGRADED / LOST (same as hackathon_interfaces/LocalizationHealth).
 GOOD, DEGRADED, LOST = 0, 1, 2
 
-RECOVERY_TIME = 1.0   # s sin causa antes de volver a un estado menos grave
-AIRBORNE_Z = 0.1      # m: por encima de esta altura se considera que el dron vuela
+RECOVERY_TIME = 1.0   # s without cause before returning to a less severe state
+AIRBORNE_Z = 0.1      # m: above this height the drone is considered airborne
 
 
 @dataclass
@@ -80,15 +80,15 @@ class SafetyInputs:
 
 @dataclass
 class SupervisorConfig:
-    hover_timeout: float = 3.0          # s en HOVER por pérdida antes de aterrizar
+    hover_timeout: float = 3.0          # s in HOVER due to a loss before landing
     lost_policy: str = 'hover_then_land'  # 'hover_then_land' | 'hover'
-    critical_distance: float = 0.3      # m: obstáculo más cerca -> HOVER
-    ttc_threshold: float = 1.5          # s: TTC menor -> SLOW
-    ranges_required: bool = True        # sin rangos -> HOVER
-    slow_speed_scale: float = 0.5       # factor de velocidad en SLOW
-    slow_max_step: float = 0.15         # m: en SLOW, objetivo POSITION a como mucho esto
-    reaction_time: float = 0.3          # s: retraso total hasta empezar a frenar
-    max_decel: float = 2.0              # m/s^2: deceleración (= max_accel del simulador)
+    critical_distance: float = 0.3      # m: closer obstacle -> HOVER
+    ttc_threshold: float = 1.5          # s: lower TTC -> SLOW
+    ranges_required: bool = True        # no ranges -> HOVER
+    slow_speed_scale: float = 0.5       # speed factor in SLOW
+    slow_max_step: float = 0.15         # m: in SLOW, POSITION target at most this far
+    reaction_time: float = 0.3          # s: total delay until braking starts
+    max_decel: float = 2.0              # m/s^2: deceleration (= simulator max_accel)
 
 
 class SafetySupervisor:
@@ -96,22 +96,22 @@ class SafetySupervisor:
         self.config = config
         self.state = NORMAL
         self.reason = 'startup'
-        self._loss_since = None      # desde cuándo dura una causa "de pérdida"
-        self._calm_since = None      # desde cuándo la causa es menos grave que el estado
+        self._loss_since = None      # since when a "loss" cause has lasted
+        self._calm_since = None      # since when the cause is less severe than the state
 
     # ------------------------------------------------------------------
     def evaluate(self, inputs):
-        """Devuelve (state, speed_scale, reason)."""
+        """Return (state, speed_scale, reason)."""
         wanted, reason = self._wanted_state(inputs)
 
         if self.state == ABORT:
-            pass                                    # ABORT no se abandona
+            pass                                    # ABORT is never left
         elif wanted >= self.state:
-            # Igual o más grave: se aplica inmediatamente.
+            # Equal or more severe: applied immediately.
             self.state, self.reason = wanted, reason
             self._calm_since = None
         else:
-            # Menos grave: solo tras RECOVERY_TIME s seguidos sin la causa.
+            # Less severe: only after RECOVERY_TIME consecutive seconds without the cause.
             if self._calm_since is None:
                 self._calm_since = inputs.now
             if inputs.now - self._calm_since >= RECOVERY_TIME:
@@ -121,10 +121,10 @@ class SafetySupervisor:
         return self.state, self._speed_scale(self.state), self.reason
 
     def _wanted_state(self, i):
-        """Estado que pedirían las entradas ahora mismo, sin histéresis."""
+        """State the inputs would request right now, without hysteresis."""
         c = self.config
 
-        # Causas "de pérdida": no sabemos dónde estamos o nadie nos manda.
+        # "Loss" causes: we do not know where we are or nobody is commanding us.
         loss = []
         if i.localization == LOST:
             loss.append('localization_lost')
@@ -172,12 +172,12 @@ class SafetySupervisor:
     # ------------------------------------------------------------------
     def filter_command(self, setpoint, state, speed_scale, current_position,
                        geofence=None, z_limits=None):
-        """Aplica el estado al setpoint: escala velocidad, convierte a hover o lo descarta.
+        """Apply the state to the setpoint: scale velocity, turn into hover or drop it.
 
         setpoint: dict {'mode', 'position': (x,y,z), 'velocity': (vx,vy,vz), 'yaw'}.
-        current_position: (x, y, z) actual del dron, o None si aún no se conoce.
-        geofence: objeto Geofence (o None). z_limits: (z_min, z_max) (o None).
-        Devuelve un dict con el mismo formato, o None si no hay que publicar nada.
+        current_position: current (x, y, z) of the drone, or None if still unknown.
+        geofence: Geofence object (or None). z_limits: (z_min, z_max) (or None).
+        Returns a dict with the same format, or None if nothing must be published.
         """
         if state in (LAND, ABORT):
             return None
@@ -199,7 +199,7 @@ class SafetySupervisor:
             'yaw': setpoint['yaw'],
         }
 
-        # SLOW: más despacio.
+        # SLOW: slower.
         if speed_scale < 1.0:
             if out['mode'] == MODE_VELOCITY:
                 out['velocity'] = tuple(v * speed_scale for v in out['velocity'])
@@ -210,14 +210,14 @@ class SafetySupervisor:
                 k = step / dist if dist > 0.0 else 0.0
                 out['position'] = tuple(c + k * d for c, d in zip(current_position, delta))
 
-        # Geofence (TP-39) y banda de altura (TP-17): el objetivo nunca sale de la caja.
+        # Geofence (TP-39) and height band (TP-17): the target never leaves the box.
         if geofence is not None:
             out['position'] = geofence.clamp(out['position'])
         if z_limits is not None:
             x, y, z = out['position']
             out['position'] = (x, y, min(max(z, z_limits[0]), z_limits[1]))
 
-        # En VELOCITY, no empujar hacia fuera si el dron ya está en el borde.
+        # In VELOCITY, do not push outwards if the drone is already at the border.
         if out['mode'] == MODE_VELOCITY and geofence is not None and current_position:
             v = list(out['velocity'])
             for k in range(3):
@@ -231,16 +231,16 @@ class SafetySupervisor:
 
 
 def stopping_distance(speed, config):
-    """Metros que recorre el dron hasta pararse si va a 'speed' m/s."""
+    """Metres the drone travels until it stops when flying at 'speed' m/s."""
     v = max(0.0, speed)
     return v * config.reaction_time + v * v / (2.0 * config.max_decel)
 
 
 def effective_clearance(distance, closing_rate, config):
-    """Rango menos la distancia de frenado hacia ese obstáculo (REP-117).
+    """Range minus the stopping distance towards that obstacle (REP-117).
 
-    closing_rate: d_dot del sensor (m/s, negativo = se acerca) o None/NaN.
-    Devuelve inf si la lectura no sirve (+inf o NaN) y 0 si es -inf (pegado).
+    closing_rate: sensor d_dot (m/s, negative = approaching) or None/NaN.
+    Returns inf if the reading is unusable (+inf or NaN) and 0 if it is -inf (touching).
     """
     if distance == -math.inf:
         return 0.0
@@ -253,10 +253,10 @@ def effective_clearance(distance, closing_rate, config):
 
 
 def min_finite(values):
-    """Distancia mínima de una lista de rangos REP-117, o inf si no hay ninguna.
+    """Minimum distance of a list of REP-117 ranges, or inf if there is none.
 
-    -inf (demasiado cerca) cuenta como 0 m: es el caso MÁS peligroso, no se ignora.
-    +inf (sin retorno) y NaN (inválido) se ignoran.
+    -inf (too close) counts as 0 m: it is the MOST dangerous case, it is not ignored.
+    +inf (no return) and NaN (invalid) are ignored.
     """
     usable = [0.0 if v == -math.inf else v for v in values]
     finite = [v for v in usable if math.isfinite(v) and v >= 0.0]

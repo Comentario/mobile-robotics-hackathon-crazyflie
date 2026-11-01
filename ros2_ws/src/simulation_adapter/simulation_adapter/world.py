@@ -1,4 +1,4 @@
-"""Geometría 2.5D: sala y cajas, distancias en metros, tiempo relativo en segundos."""
+"""2.5D geometry: room and boxes, distances in metres, relative time in seconds."""
 from dataclasses import dataclass, field
 import math
 
@@ -14,13 +14,13 @@ class Box:
 
     def __post_init__(self):
         if any(len(v) != 2 for v in (self.center, self.size, self.velocity)):
-            raise ValueError('center, size y velocity deben tener dos elementos')
+            raise ValueError('center, size and velocity must have two elements')
         if not all(math.isfinite(v) for v in (*self.center, *self.size, *self.velocity, self.t_start)):
-            raise ValueError('Geometría no finita')
+            raise ValueError('Non-finite geometry')
         if min(self.size) <= 0 or self.height <= 0 or math.isnan(self.height):
-            raise ValueError('Tamaño y altura deben ser positivos')
+            raise ValueError('Size and height must be positive')
         if self.t_start < 0 or math.isnan(self.t_end) or self.t_end <= self.t_start:
-            raise ValueError('Intervalo temporal inválido')
+            raise ValueError('Invalid time interval')
 
     def active(self, t):
         return self.t_start <= t < self.t_end
@@ -35,7 +35,7 @@ class Box:
 
 
 def ray_box(origin, direction, lower, upper):
-    """Método de slabs; un origen dentro de la caja devuelve distancia cero."""
+    """Slabs method; an origin inside the box returns distance zero."""
     near, far = 0.0, math.inf
     for p, d, lo, hi in zip(origin, direction, lower, upper):
         if abs(d) < 1e-12:
@@ -57,17 +57,17 @@ class World:
 
     def __post_init__(self):
         if len(self.bounds) != 4 or not all(math.isfinite(v) for v in (*self.bounds, self.ceiling)):
-            raise ValueError('Bounds y techo deben ser finitos')
+            raise ValueError('Bounds and ceiling must be finite')
         x0, y0, x1, y1 = self.bounds
         if x0 >= x1 or y0 >= y1 or self.ceiling <= 0:
-            raise ValueError('Sala sin volumen positivo')
+            raise ValueError('Room without positive volume')
 
     @classmethod
     def from_dict(cls, data):
         boxes = []
         for item in data.get('obstacles', []):
             if item.get('type', 'box') != 'box':
-                raise ValueError('Solo se admiten obstáculos box')
+                raise ValueError('Only box obstacles are supported')
             boxes.append(Box(tuple(item['center']), tuple(item['size']),
                              item.get('height', math.inf), tuple(item.get('velocity', (0, 0))),
                              item.get('t_start', 0.0), item.get('t_end', math.inf)))
@@ -75,15 +75,15 @@ class World:
 
     def raycast(self, origin, direction, max_range, t):
         if len(origin) != 3 or len(direction) != 3:
-            raise ValueError('Rayo XYZ requerido')
+            raise ValueError('An XYZ ray is required')
         if not all(math.isfinite(v) for v in (*origin, *direction, max_range, t)) or max_range <= 0:
-            raise ValueError('Rayo no finito o alcance inválido')
+            raise ValueError('Non-finite ray or invalid range')
         if not math.isclose(math.hypot(*direction), 1.0, abs_tol=1e-9):
-            raise ValueError('La dirección debe ser unitaria')
+            raise ValueError('The direction must be a unit vector')
         lower = (self.bounds[0], self.bounds[1], 0.0)
         upper = (self.bounds[2], self.bounds[3], self.ceiling)
         if any(p < lo or p > hi for p, lo, hi in zip(origin, lower, upper)):
-            return 0.0  # Sensor fuera de la sala, dentro de material sólido.
+            return 0.0  # Sensor outside the room, inside solid material.
         hit = math.inf
         for p, d, lo, hi in zip(origin, direction, lower, upper):
             if abs(d) > 1e-12:
@@ -95,7 +95,7 @@ class World:
 
     def collides(self, position, radius, t):
         if len(position) != 3 or not all(math.isfinite(v) for v in (*position, radius, t)) or radius < 0:
-            raise ValueError('Esfera inválida')
+            raise ValueError('Invalid sphere')
         lower = (self.bounds[0], self.bounds[1], 0.0)
         upper = (self.bounds[2], self.bounds[3], self.ceiling)
         if any(p-radius <= lo or p+radius >= hi for p, lo, hi in zip(position, lower, upper)):

@@ -3,7 +3,7 @@
 <package format="3">
   <name>simulation_adapter</name>
   <version>0.1.0</version>
-  <description>Simulador cinemático propio: publica pose y rangos sintéticos con la misma API que cf_adapter.</description>
+  <description>Our own kinematic simulator: publishes pose and synthetic ranges with the same API as cf_adapter.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

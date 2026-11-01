@@ -1,4 +1,4 @@
-"""Salud de mediciones: movimiento no equivale a frescura."""
+"""Measurement health: motion is not the same as freshness."""
 import math
 from state_monitor.health import HealthConfig,LocalizationHealthMonitor,GOOD,LOST,DEGRADED
 

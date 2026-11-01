@@ -1,17 +1,24 @@
-"""Tests unitarios de safety_supervisor.geofence (lógica pura, sin ROS).
+"""Unit tests for safety_supervisor.geofence (pure logic, no ROS).
 
-Ejecutar: colcon test --packages-select safety_supervisor && colcon test-result --verbose
+Run: colcon test --packages-select safety_supervisor && colcon test-result --verbose
 """
-import pytest
+from safety_supervisor.geofence import Geofence
 
-pytestmark = pytest.mark.skip(reason='TODO: implementar junto con TP-37 / TP-38 / TP-39')
+FENCE = Geofence(-2.0, -2.0, 0.0, 2.0, 2.0, 1.5)
+
 
 def test_inside_point():
-    pass
+    assert FENCE.contains((0.0, 1.9, 0.5))
+    assert not FENCE.contains((2.05, 0.0, 0.5))
+    assert FENCE.contains((2.05, 0.0, 0.5), margin=0.1)
+
 
 def test_clamp_outside_point():
-    pass
+    assert FENCE.clamp((3.0, -2.5, 0.5)) == (2.0, -2.0, 0.5)
+    assert FENCE.clamp((1.0, 1.0, 0.5)) == (1.0, 1.0, 0.5)
+
 
 def test_altitude_limits():
-    pass
-
+    assert FENCE.clamp((0.0, 0.0, 2.0))[2] == 1.5
+    assert FENCE.clamp((0.0, 0.0, -0.3))[2] == 0.0
+    assert not FENCE.contains((0.0, 0.0, 1.6))

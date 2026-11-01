@@ -1,5 +1,5 @@
-# Obstáculo que aparece en la ruta a los 6 s (T05).
-# Formato: simulation_adapter/world.py
+# Obstacle that appears on the route at 6 s (T05).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 2.0
 obstacles:

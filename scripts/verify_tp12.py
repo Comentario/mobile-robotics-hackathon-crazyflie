@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Verifica el launch instalado sin hardware ni órdenes de vuelo.
+"""Verifies the installed launch without hardware or flight commands.
 
-Uso: source ROS e install/setup.bash; ROS_DOMAIN_ID=92 python3 scripts/verify_tp12.py
-Usar un dominio vacío. Comprueba arranque, API, parámetros, TF y cierre.
+Usage: source ROS and install/setup.bash; ROS_DOMAIN_ID=92 python3 scripts/verify_tp12.py
+Use an empty domain. Checks start-up, API, parameters, TF and shutdown.
 """
 import argparse
 import math
@@ -35,9 +35,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', default='T01_single_waypoint')
     parser.add_argument('--params', default='simulation.yaml',
-                        help='Perfil de parámetros a validar, por ejemplo event.yaml')
+                        help='Parameter profile to validate, for example event.yaml')
     parser.add_argument('--stop-node', action='store_true',
-                        help='Termina el simulador para comprobar cierre del stack ante salida de un nodo')
+                        help='Stops the simulator to check that the stack shuts down when a node exits')
     args = parser.parse_args()
     os.environ.setdefault('ROS_DOMAIN_ID', '92')
     os.environ.setdefault('ROS_LOCALHOST_ONLY', '1')
@@ -56,14 +56,14 @@ def main():
             if predicate():
                 return
             if process is not None and process.poll() is not None:
-                raise AssertionError(f'Launch terminó antes de tiempo; log: {log_path}')
-        raise AssertionError(f'Timeout de verificación; log: {log_path}')
+                raise AssertionError(f'Launch exited prematurely; log: {log_path}')
+        raise AssertionError(f'Verification timeout; log: {log_path}')
 
     try:
-        # No compartir la prueba con un bringup que ya esté activo.
+        # Do not share the test with a bringup that is already running.
         for _ in range(10):
             executor.spin_once(timeout_sec=.05)
-        assert not EXPECTED.intersection(peer.get_node_names()), 'Usar un dominio ROS vacío'
+        assert not EXPECTED.intersection(peer.get_node_names()), 'Use an empty ROS domain'
         with tempfile.TemporaryDirectory(prefix='tp12-') as folder:
             overlay = Path(folder)/'overlay.yaml'
             overlay.write_text('/**:\n  ros__parameters:\n    base_frame: tp12_body\n'
@@ -117,20 +117,20 @@ def main():
                     assert Path(values[3].string_value).is_file()
                     text = log_path.read_text()
                     assert 'Traceback' not in text and 'process has died' not in text
-                    print('PASS: 16 nodos, odometría → estado, seis rangos, servicios y TF')
-                    print('PASS: mundo/escenario instalados y overlay aplicado a parámetros y frames')
+                    print('PASS: 16 nodes, odometry -> state, six ranges, services and TF')
+                    print('PASS: world/scenario installed and overlay applied to parameters and frames')
                     if args.stop_node:
                         match = re.search(r'\[sim_node-\d+\]: process started with pid \[(\d+)\]', text)
-                        assert match, 'No se encontró el PID del simulador en el log'
+                        assert match, 'The simulator PID was not found in the log'
                         os.kill(int(match.group(1)), signal.SIGINT)
                         wait(lambda: process.poll() is not None, timeout=15)
-                        print('PASS: terminar el simulador cierra el resto del bringup')
+                        print('PASS: stopping the simulator shuts down the rest of the bringup')
                 except BaseException:
                     print(log_path.read_text())
                     raise
                 finally:
                     if process.poll() is None:
-                        # SIGINT al launch equivale al Ctrl+C del usuario.
+                        # SIGINT to the launch is the same as the user's Ctrl+C.
                         process.send_signal(signal.SIGINT)
                         try:
                             process.wait(timeout=15)
@@ -138,14 +138,14 @@ def main():
                             os.killpg(process.pid, signal.SIGTERM)
                             process.wait(timeout=5)
                 assert process.returncode == 0, log_path.read_text()
-                # No esperar mensajes: ya se cerró el productor.
+                # Do not wait for messages: the producer has already closed.
                 deadline = time.monotonic()+10
                 while EXPECTED.intersection(peer.get_node_names()) and time.monotonic() < deadline:
                     executor.spin_once(timeout_sec=.1)
-                assert not EXPECTED.intersection(peer.get_node_names()), 'Quedaron nodos tras cerrar launch'
+                assert not EXPECTED.intersection(peer.get_node_names()), 'Nodes were left after closing the launch'
                 assert 'Traceback' not in log_path.read_text(), log_path.read_text()
-                print('PASS: cierre sin nodos residuales' if args.stop_node else
-                      'PASS: Ctrl+C cierra launch y todos sus nodos')
+                print('PASS: shutdown without leftover nodes' if args.stop_node else
+                      'PASS: Ctrl+C closes the launch and all its nodes')
     finally:
         executor.shutdown()
         peer.destroy_node()

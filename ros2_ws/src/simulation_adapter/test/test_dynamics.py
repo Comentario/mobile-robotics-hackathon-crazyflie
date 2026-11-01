@@ -1,4 +1,4 @@
-"""TP-10: ciclo de vuelo y comandos del modelo puro, sin ROS."""
+"""TP-10: flight cycle and commands of the pure model, without ROS."""
 import math
 import pytest
 from simulation_adapter.dynamics import DroneState, KinematicDrone, MotionCommand

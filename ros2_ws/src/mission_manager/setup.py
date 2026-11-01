@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Secuencia de waypoints y máquina de estados de la misión.',
+    description='Waypoint sequence and mission state machine.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

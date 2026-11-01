@@ -3,7 +3,7 @@
 <package format="3">
   <name>path_processor</name>
   <version>0.1.0</version>
-  <description>Convierte la ruta discreta en referencias ejecutables: simplificación y espaciado.</description>
+  <description>Turns the discrete route into executable references: simplification and spacing.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 

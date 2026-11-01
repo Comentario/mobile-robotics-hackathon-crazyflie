@@ -1,4 +1,4 @@
-"""Regresiones de coherencia del evento; no conectan radio ni arrancan ROS."""
+"""Event consistency regressions; they neither open a radio nor start ROS."""
 from pathlib import Path
 import pytest
 import yaml
@@ -41,8 +41,8 @@ def test_invalid_envelope_limits_or_mode_rejected(event,section,key,value):
 def test_mission_frame_and_waypoint_must_match_envelope(event):
     event[2].update(frame_id='other',waypoints=[[10,0,.5]])
     errors, _ = validate_event(*event)
-    assert any('Frame de misión' in error for error in errors)
-    assert any('Waypoint fuera' in error for error in errors)
+    assert any('Mission frame' in error for error in errors)
+    assert any('Waypoint outside the geofence' in error for error in errors)
 
 
 def test_hardware_identity_and_frame_must_match(event):
@@ -56,4 +56,4 @@ def test_ready_cli_rejects_unfilled_template():
     result = subprocess.run(['/usr/bin/python3',str(root/'scripts/verify_event_config.py'),'--ready'],
                             capture_output=True,text=True)
     assert result.returncode == 1
-    assert 'PENDIENTE:' in result.stdout
+    assert 'PENDING:' in result.stdout

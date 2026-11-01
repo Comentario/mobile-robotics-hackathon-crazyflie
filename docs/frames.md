@@ -1,72 +1,72 @@
-# Frames de coordenadas (TP-13)
+# Coordinate frames (TP-13)
 
-Qué sistemas de coordenadas usa el stack, cómo se relacionan y con qué convenciones. Complementa la sección "Frames (TF)" de [interfaces.md](interfaces.md).
+Which coordinate systems the stack uses, how they relate and with which conventions. Complements the "Frames (TF)" section of [interfaces.md](interfaces.md).
 
-## Convenciones
+## Conventions
 
-| Tema | Convención | Referencia |
+| Topic | Convention | Reference |
 |---|---|---|
-| Unidades | Metros, segundos y radianes (SI). | Regla 5 de interfaces.md |
-| Ejes de `map` y `base_link` | **x adelante, y izquierda, z arriba** (mano derecha). | REP-103 |
-| Ángulos | `yaw` positivo = giro **antihorario** visto desde arriba (de x hacia y). `yaw = 0` mira hacia +x de `map`. | REP-103 |
-| Ejes de un sensor de rango | El **eje x del frame del sensor apunta en la dirección del rayo**. | `sensor_msgs/Range` |
-| Valores de rango | `+inf` = sin retorno, `-inf` = demasiado cerca, `NaN` = inválido. | REP-117 |
+| Units | Metres, seconds and radians (SI). | Rule 5 of interfaces.md |
+| `map` and `base_link` axes | **x forward, y left, z up** (right-handed). | REP-103 |
+| Angles | Positive `yaw` = **counter-clockwise** turn seen from above (from x towards y). `yaw = 0` faces +x of `map`. | REP-103 |
+| Range sensor axes | The **x axis of the sensor frame points along the ray**. | `sensor_msgs/Range` |
+| Range values | `+inf` = no return, `-inf` = too close, `NaN` = invalid. | REP-117 |
 
-## Árbol de frames
+## Frame tree
 
 ```text
-map ──(state_monitor, dinámico)──> base_link ──(estáticos, frames.yaml)──> front_range
-                                                                        ├─> back_range
-                                                                        ├─> left_range
-                                                                        ├─> right_range
-                                                                        ├─> up_range
-                                                                        └─> down_tof
+map ──(state_monitor, dynamic)──> base_link ──(static, frames.yaml)──> front_range
+                                                                    ├─> back_range
+                                                                    ├─> left_range
+                                                                    ├─> right_range
+                                                                    ├─> up_range
+                                                                    └─> down_tof
 ```
 
-| Frame | Padre | Qué representa | Quién lo publica | Tipo |
+| Frame | Parent | What it represents | Who publishes it | Type |
 |---|---|---|---|---|
-| `map` | — | La sala. Origen fijo en el suelo. Todo el stack trabaja aquí (waypoints, mapa, ruta, setpoints). | — (raíz) | — |
-| `base_link` | `map` | El centro del dron. Se mueve con él. | `state_monitor`, a partir de `/hk/state` | Dinámico |
-| `front_range` … `up_range` | `base_link` | Cada sensor del Multi-ranger. | `static_transform_publisher` (launch, desde `frames.yaml`) | Estático |
-| `down_tof` | `base_link` | ToF inferior del Flow Deck (altura sobre el suelo). | Igual que los anteriores | Estático |
+| `map` | — | The room. Fixed origin on the floor. The whole stack works here (waypoints, map, route, setpoints). | — (root) | — |
+| `base_link` | `map` | The centre of the drone. It moves with it. | `state_monitor`, from `/hk/state` | Dynamic |
+| `front_range` … `up_range` | `base_link` | Each Multi-ranger sensor. | `static_transform_publisher` (launch, from `frames.yaml`) | Static |
+| `down_tof` | `base_link` | Flow Deck bottom ToF (height above the floor). | Same as above | Static |
 
-**`odom` no se usa por ahora:** la pose del EKF onboard ya llega fusionada en un único frame global (ver interfaces.md).
+**`odom` is not used for now:** the onboard EKF pose already arrives fused in a single global frame (see interfaces.md).
 
-## Posición de los sensores en el dron
+## Sensor positions on the drone
 
-Valores de `hackathon_bringup/config/frames.yaml` (`xyz` en m, `rpy` en rad):
+Values of `hackathon_bringup/config/frames.yaml` (`xyz` in m, `rpy` in rad):
 
-| Frame | xyz | rpy | Hacia dónde apunta el rayo |
+| Frame | xyz | rpy | Ray direction |
 |---|---|---|---|
-| `front_range` | (0.02, 0, 0.03) | (0, 0, 0) | +x de `base_link` (delante) |
-| `back_range` | (-0.02, 0, 0.03) | (0, 0, π) | -x (detrás) |
-| `left_range` | (0, 0.02, 0.03) | (0, 0, π/2) | +y (izquierda) |
-| `right_range` | (0, -0.02, 0.03) | (0, 0, -π/2) | -y (derecha) |
-| `up_range` | (0, 0, 0.04) | (0, -π/2, 0) | +z (arriba) |
-| `down_tof` | (0, 0, -0.01) | (0, π/2, 0) | -z (abajo) |
+| `front_range` | (0.02, 0, 0.03) | (0, 0, 0) | +x of `base_link` (front) |
+| `back_range` | (-0.02, 0, 0.03) | (0, 0, π) | -x (back) |
+| `left_range` | (0, 0.02, 0.03) | (0, 0, π/2) | +y (left) |
+| `right_range` | (0, -0.02, 0.03) | (0, 0, -π/2) | -y (right) |
+| `up_range` | (0, 0, 0.04) | (0, -π/2, 0) | +z (up) |
+| `down_tof` | (0, 0, -0.01) | (0, π/2, 0) | -z (down) |
 
-Los offsets son **aproximados**: hay que medirlos sobre el Crazyflie real con el Multi-ranger montado (TODO en `frames.yaml`). Un error de 1–2 cm es despreciable frente al inflado de obstáculos (`obstacle_inflation_radius: 0.25`); el **sentido** de cada rayo sí es crítico.
+The offsets are **approximate**: they must be measured on the real Crazyflie with the Multi-ranger mounted (TODO in `frames.yaml`). A 1–2 cm error is negligible compared with the obstacle inflation (`obstacle_inflation_radius: 0.25`); the **direction** of every ray, however, is critical.
 
-## Relación con Crazyswarm2 y el hardware
+## Relation with Crazyswarm2 and the hardware
 
-- Crazyswarm2 publica su propio TF `world -> cfXXX`. En modo SIL, `sim_sensors` lo usa para generar la pose y los rangos. Después, `cf_adapter` convierte la pose a `/hk/adapter/odom` en `map`, igual que el simulador.
-- Con **Lighthouse**, el origen de `map` es el origen del espacio calibrado por las estaciones base.
-- Con solo **Flow Deck**, la pose es relativa al punto de despegue: el origen de `map` es donde despega el dron.
+- Crazyswarm2 publishes its own TF `world -> cfXXX`. In SIL mode, `sim_sensors` uses it to generate the pose and the ranges. Then `cf_adapter` converts the pose into `/hk/adapter/odom` in `map`, just like the simulator.
+- With **Lighthouse**, the `map` origin is the origin of the space calibrated by the base stations.
+- With only the **Flow Deck**, the pose is relative to the takeoff point: the `map` origin is where the drone takes off.
 
-## Cómo verificarlo
+## How to verify it
 
-Con `simulation_cf.launch.py` en marcha:
+With `simulation_cf.launch.py` running:
 
 ```bash
-ros2 run tf2_ros tf2_echo map base_link        # dónde está el dron en la sala
-ros2 run tf2_ros tf2_echo base_link left_range # dónde está un sensor en el dron
-ros2 run tf2_tools view_frames                 # genera frames.pdf con el árbol completo
+ros2 run tf2_ros tf2_echo map base_link        # where the drone is in the room
+ros2 run tf2_ros tf2_echo base_link left_range # where a sensor is on the drone
+ros2 run tf2_tools view_frames                 # generates frames.pdf with the full tree
 ```
 
-## Estado y pendientes
+## Status and pending work
 
-- [x] Convenciones, árbol y offsets documentados.
-- [x] TF estáticos de los 6 sensores publicados por el launch.
-- [ ] `map -> base_link` publicado por `state_monitor`.
-- [ ] Medir los offsets reales en el dron del evento.
-- [ ] Verificar signos con el dron real: mover el dron hacia delante debe aumentar x, y un obstáculo a la izquierda debe aparecer en `left_range` (runbook del evento, paso 6).
+- [x] Conventions, tree and offsets documented.
+- [x] Static TFs of the 6 sensors published by the launch.
+- [x] `map -> base_link` published by `state_monitor`.
+- [ ] Measure the real offsets on the event drone.
+- [ ] Verify the signs with the real drone: moving the drone forward must increase x, and an obstacle on the left must appear in `left_range` (event runbook, step 6).

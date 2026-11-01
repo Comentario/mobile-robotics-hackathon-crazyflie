@@ -1,5 +1,5 @@
-# Techo bajo a 0.8 m (T15, TP-35).
-# Formato: simulation_adapter/world.py
+# Low ceiling at 0.8 m (T15, TP-35).
+# Format: simulation_adapter/world.py
 bounds: [-2.0, -2.0, 2.0, 2.0]
 ceiling: 0.8
 obstacles: []

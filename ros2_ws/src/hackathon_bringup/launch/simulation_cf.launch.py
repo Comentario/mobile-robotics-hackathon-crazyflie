@@ -1,13 +1,13 @@
-"""MVP integrado con la API de persona 2.
+"""Integrated MVP with the Crazyswarm2 API of person 2 (cf_adapter path, as on hardware).
 
-backend:=emulator usa sim_crazyflie (cinemático propio, portable).
-backend:=sil conecta cf_adapter + sim_sensors a Crazyswarm2 externo, backend sim.
-Para sil todos los nodos usan /clock. No inicia radio ni hardware.
+backend:=emulator uses sim_crazyflie (our own portable kinematic model).
+backend:=sil connects cf_adapter + sim_sensors to an external Crazyswarm2 sim backend.
+With sil every node uses /clock. Starts neither radio nor hardware.
 
-Ruta cooperativa CF2 → CF1: route:=<ruta.json> (o la clave `route` del escenario)
-sustituye global_planner/path_processor por scripts/cooperative_route.py y activa
-use_planned_path en local_navigator, a la altura de navegación de la ruta.
-rviz:=true muestra el mapa del CF2, la ruta y la trayectoria volada (scripts/route_view.py).
+Cooperative CF2 -> CF1 route: route:=<route.json> (or the scenario `route` key)
+replaces global_planner/path_processor with scripts/cooperative_route.py and enables
+use_planned_path in local_navigator, at the navigation height of the route.
+rviz:=true shows the CF2 map, the route and the flown trajectory (scripts/route_view.py).
 """
 import json
 import os
@@ -22,7 +22,7 @@ from hackathon_bringup.stack import config_file,param_files,stack_nodes,static_s
 
 
 def repo_root():
-    """Raíz del repo desde ros2_ws/install/hackathon_bringup/share/hackathon_bringup."""
+    """Repository root from ros2_ws/install/hackathon_bringup/share/hackathon_bringup."""
     share=get_package_share_directory('hackathon_bringup')
     return os.path.normpath(os.path.join(share,*['..']*5))
 
@@ -40,14 +40,14 @@ def setup(context):
         with open(route_path,encoding='utf-8') as stream: route=json.load(stream)
     params=param_files(config,arg('params'),arg('overlay'))
     backend=arg('backend')
-    if backend not in ('emulator','sil'): raise ValueError('backend debe ser emulator o sil')
+    if backend not in ('emulator','sil'): raise ValueError('backend must be emulator or sil')
     robot=arg('robot_name')
-    # Estos parámetros de launch prevalecen sobre overlays antiguos incompatibles.
+    # These launch parameters take precedence over old, incompatible overlays.
     common={'use_sim_time':backend=='sil','scenario_name':arg('scenario')}
     source={'robot_name':robot,'scenario_file':scenario_path,
             'world_file':config_file(config,scenario['world'])}
-    # ROS da prioridad a secciones por nodo frente a /**, incluso si el
-    # wildcard se pasa después. Materializar overrides por nodo evita eso.
+    # ROS gives per-node sections priority over /**, even if the wildcard is
+    # passed later. Materializing per-node overrides avoids that.
     merged={}
     for path in params:
         with open(path,encoding='utf-8') as stream:
@@ -81,11 +81,11 @@ def setup(context):
         cmd=['python3',server,'--route',route_path]+(['--allow-synthetic'] if route.get('simulation') else [])
         nodes.append(ExecuteProcess(cmd=cmd,name='cooperative_route',output='screen'))
     if arg('rviz')=='true':
-        # Mapa del CF2, ruta planificada, tramo actual y trayectoria volada; cerrar RViz detiene todo.
+        # CF2 map, planned route, current leg and flown trajectory; closing RViz stops everything.
         view=['python3',os.path.join(repo_root(),'scripts','route_view.py')]+(['--route',route_path] if route is not None else [])
         nodes.append(ExecuteProcess(cmd=view,name='route_view',output='screen'))
         rviz_config=os.path.join(get_package_share_directory('hackathon_bringup'),'rviz','cf1_route.rviz')
-        # Render por software: evita problemas de GPU/shaders en WSLg.
+        # Software rendering: avoids GPU/shader problems in WSLg.
         nodes.append(Node(package='rviz2',executable='rviz2',arguments=['-d',rviz_config],
                           additional_env={'LIBGL_ALWAYS_SOFTWARE':'1','QT_QPA_PLATFORM':'xcb'}))
     nodes+=static_sensor_tfs(config,shared_frames(params))
@@ -107,9 +107,9 @@ def generate_launch_description():
         DeclareLaunchArgument('overlay',default_value=''),
         DeclareLaunchArgument('robot_name',default_value='cf231'),
         DeclareLaunchArgument('route',default_value='',
-                              description='Ruta cooperativa JSON (plan_shared_map / generate_polygon_preview)'),
+                              description='Cooperative route JSON (plan_shared_map / generate_polygon_preview)'),
         DeclareLaunchArgument('route_server',default_value='',
-                              description='Ruta a cooperative_route.py si no está en <repo>/scripts'),
+                              description='Path to cooperative_route.py if it is not in <repo>/scripts'),
         DeclareLaunchArgument('rviz',default_value='false',
-                              description='true: RViz con mapa del CF2, ruta y trayectoria volada'),
+                              description='true: RViz with the CF2 map, route and flown trajectory'),
         OpaqueFunction(function=setup)])
