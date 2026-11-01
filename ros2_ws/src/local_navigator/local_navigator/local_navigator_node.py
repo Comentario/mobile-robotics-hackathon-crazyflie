@@ -90,7 +90,7 @@ class LocalNavigator(Node):
         # CF1 cooperative route: ordered tracking of an offline-planned path.
         self.route = RouteFollower(self.route_point_tolerance, self.path_start_tolerance)
         self.path_stamp = None
-        self.route_yaw = None
+        self.held_yaw = None
 
         self.command_pub = self.create_publisher(
             Setpoint,
@@ -171,6 +171,8 @@ class LocalNavigator(Node):
         self.declare_parameter('z_max', 1.5)
         self.declare_parameter('goal_timeout', 0.5)
         self.use_planned_path = self.declare_parameter('use_planned_path', False).value
+        # false: hold the heading (default); true: face the lookahead target (CF2 branch).
+        self.face_target = bool(self.declare_parameter('face_target', False).value)
         self.path_timeout = self.declare_parameter('path_timeout', 0.5).value
         self.route_point_tolerance = self.declare_parameter('route_point_tolerance', 0.03).value
         self.path_start_tolerance = self.declare_parameter('path_start_tolerance', 0.15).value
@@ -762,18 +764,20 @@ class LocalNavigator(Node):
             current_z=self.position[2],
         )
 
-        if self.use_planned_path:
-            # Route points are a few cm apart: facing each one makes the yaw
-            # swing and fakes range closing rates. Hold the initial heading.
-            if self.route_yaw is None:
-                self.route_yaw = self.current_yaw
-            yaw = self.route_yaw
-        else:
+        if self.face_target and not self.use_planned_path:
             yaw = yaw_towards(
                 position=self.position,
                 target=navigation_target,
                 current_yaw=self.current_yaw,
             )
+        else:
+            # Hold the heading (CF1 MVP behaviour): turning sweeps the ToF rays
+            # and fakes closing rates that do not come from translation, which
+            # the supervisor reads as an approaching obstacle (TTC, clearance).
+            # Route points are a few cm apart, so route mode always holds it.
+            if self.held_yaw is None:
+                self.held_yaw = self.current_yaw
+            yaw = self.held_yaw
 
         msg = Setpoint()
 
