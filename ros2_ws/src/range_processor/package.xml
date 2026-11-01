@@ -3,13 +3,14 @@
 <package format="3">
   <name>range_processor</name>
   <version>0.1.0</version>
-  <description>Valida, filtra y transforma al mapa las lecturas del Multi-ranger.</description>
+  <description>Validates, filters and transforms the Multi-ranger readings into the map.</description>
   <maintainer email="alipazaga.daniel@gmail.com">Daniel Alipázaga Lazo</maintainer>
   <license>TODO</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>hackathon_interfaces</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <test_depend>python3-pytest</test_depend>
 

@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Daniel Alipázaga Lazo',
     maintainer_email='alipazaga.daniel@gmail.com',
-    description='Rejilla de ocupación 2D móvil alrededor del dron, con inflado y caducidad de obstáculos.',
+    description='Rolling 2D occupancy grid around the drone, with obstacle inflation and decay.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={
